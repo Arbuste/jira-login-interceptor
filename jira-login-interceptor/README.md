@@ -100,15 +100,37 @@ If `config.json` is left empty (or missing), users can configure the extension m
 
 ### Flow Diagram
 
-```
-1. User visits Jira/Confluence and logs in
-2. Login successful, redirects to: https://id.atlassian.com/login/authorize?continue=REDIRECT_URL
-3. Content script detects this page and blocks navigation
-4. Content script extracts __aid_user_id from login cookies
-5. Content script sends message to service worker
-6. Service worker calls Atlassian Admin API to add user to group
-7. Service worker verifies group membership
-8. Content script navigates to REDIRECT_URL
+![[login-flow.svg]]
+
+```plantuml
+@startuml Login Flow
+actor User
+participant "Jira / Confluence" as Jira
+participant "id.atlassian.com" as IDP
+participant "Content Script" as CS
+participant "Service Worker" as SW
+participant "Atlassian Admin API" as API
+
+User -> Jira : Visits and logs in
+Jira -> IDP : Redirect to /login/authorize?continue=REDIRECT_URL
+IDP -> CS : Page load triggers content script
+
+CS -> CS : Block navigation\nShow interstitial overlay
+CS -> CS : Extract __aid_user_id cookie
+
+CS -> SW : Add user to group
+SW -> API : POST .../memberships
+API --> SW : 201 Created
+SW --> CS : Success
+
+CS -> SW : Verify membership
+SW -> API : GET .../users?groupIds=...
+API --> SW : Member confirmed
+SW --> CS : isMember: true
+
+CS -> Jira : Navigate to REDIRECT_URL
+Jira -> User : Page loads
+@enduml
 ```
 
 ### Request Details

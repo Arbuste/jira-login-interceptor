@@ -28,41 +28,59 @@
 
 ## 1. Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Browser (Chrome / Chromium)                                        │
-│                                                                     │
-│  ┌──────────────────────────────────┐   chrome.runtime.sendMessage  │
-│  │  Content Script                   │ ──────────────────────────►  │
-│  │  (config-loader.js               │                              │
-│  │   + content-script.js)            │   ◄──────────────────────── │
-│  │  Runs on:                         │       sendResponse           │
-│  │  id.atlassian.com/login/authorize │                              │
-│  │                                    │  ┌─────────────────────────┐│
-│  │  - Loads settings (config.json    │  │  Service Worker          ││
-│  │    then chrome.storage.local)     │  │  (service-worker.js)     ││
-│  │  - Detects login page             │  │                           ││
-│  │  - Extracts __aid_user_id cookie  │  │  - POST add-to-group     ││
-│  │  - Shows interstitial overlay     │  │  - GET verify-membership  ││
-│  │  - Blocks navigation             │  │  - 15s fetch timeout      ││
-│  │  - Validates redirect URL         │  │                           ││
-│  └──────────────────────────────────┘  └─────────────────────────┘│
-│                                                    │                │
-│  ┌──────────────┐  ┌──────────────┐               │ fetch()        │
-│  │  popup.html   │  │  options.html │               ▼               │
-│  │  config-loader│  │  options.js   │    ┌─────────────────────┐   │
-│  │  popup.js     │  │  CRUD settings│    │ Atlassian Admin API  │   │
-│  │  Status check │  │  (fallback)   │    │ api.atlassian.com    │   │
-│  └──────────────┘  └──────────────┘    └─────────────────────┘   │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │  config.json (admin-provided, bundled with extension)          │  │
-│  │  Keys: orgId, directoryId, groupId, bearerToken                │  │
-│  ├───────────────────────────────────────────────────────────────┤  │
-│  │  chrome.storage.local (fallback, manual via options page)      │  │
-│  │  Keys: orgId, directoryId, groupId, bearerToken                │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
+![[architecture-overview.svg]]
+
+```plantuml
+@startuml Architecture Overview
+skinparam componentStyle rectangle
+
+package "Browser (Chrome / Chromium)" {
+  component "Content Script\n(config-loader.js\n+ content-script.js)" as CS {
+  }
+  note right of CS
+    Runs on: id.atlassian.com/login/authorize
+    - Loads settings (config.json then chrome.storage.local)
+    - Detects login page
+    - Extracts __aid_user_id cookie
+    - Shows interstitial overlay
+    - Blocks navigation
+    - Validates redirect URL
+  end note
+
+  component "Service Worker\n(service-worker.js)" as SW {
+  }
+  note right of SW
+    - POST add-to-group
+    - GET verify-membership
+    - 15s fetch timeout
+  end note
+
+  component "Popup\n(popup.html\nconfig-loader.js\npopup.js)" as Popup
+  component "Options Page\n(options.html\noptions.js)" as Options
+
+  database "config.json\n(admin-provided)" as ConfigJSON
+  database "chrome.storage.local\n(fallback, manual)" as Storage
+
+  note bottom of ConfigJSON
+    Keys: orgId, directoryId, groupId, bearerToken
+  end note
+  note bottom of Storage
+    Keys: orgId, directoryId, groupId, bearerToken
+  end note
+}
+
+cloud "Atlassian Admin API\napi.atlassian.com" as API
+
+CS --> SW : chrome.runtime.sendMessage
+SW --> CS : sendResponse
+SW --> API : fetch()
+CS ..> ConfigJSON : loadSettings() [primary]
+CS ..> Storage : loadSettings() [fallback]
+Popup ..> ConfigJSON : loadSettings() [primary]
+Popup ..> Storage : loadSettings() [fallback]
+Options --> Storage : read / write / delete
+
+@enduml
 ```
 
 The extension follows the standard MV3 pattern:
@@ -103,40 +121,91 @@ The extension follows the standard MV3 pattern:
 
 ### 3.2 Login Interception (Happy Path)
 
-```
-Time ──────────────────────────────────────────────────────────►
+![[login-interception-happy.svg]]
+```plantuml
+@startuml Login Interception - Happy Path
+skinparam sequenceMessageAlign center
 
-  User logs in to Jira
-       │
-       ▼
-  Browser navigates to id.atlassian.com/login/authorize?continue=https://xxx.atlassian.net/...
-       │
-       ▼
-  content-script.js injected (document_start)
-       │
-       ▼
-  checkAndHandleLoginPage()
-    ├── Parses URL, extracts `continue` param
-    ├── Sets navigationBlocked = true  ← immediate, before setTimeout
-    └── setTimeout(handleLoginRedirect, 100ms)  ← wait for cookies
-              │
-              ▼
-         handleLoginRedirect(continueUrl)
-           ├── loginInProgress = true  (concurrent execution guard)
-           ├── createInterstitialOverlay()  ← full-screen dark overlay
-           ├── Step 1: loadSettings() — config.json first, then chrome.storage.local
-           │     └── If neither configured → error overlay → open options → redirect
-           ├── Step 2: extractAccountId() ← reads __aid_user_id cookie
-           │     └── If missing → error overlay → redirect after 3s
-           ├── Step 3: sendMessageWithTimeout({ action: 'makeApiRequest', ... })
-           │     └── Service worker POST to Admin API
-           │     └── If fails → error overlay → redirect after 3s
-           ├── Step 4: verifyGroupMembership() ← up to 5 polls, 2s apart
-           │     ├── If confirmed → green checkmark
-           │     └── If unconfirmed → amber warning (still redirects)
-           ├── Step 5: navigateTo(continueUrl)
-           │     └── URL validation: must be https + *.atlassian.com|net
-           └── finally: loginInProgress = false
+actor User
+participant "Browser" as Browser
+participant "content-script.js" as CS
+participant "config-loader.js" as CL
+participant "service-worker.js" as SW
+participant "Atlassian Admin API" as API
+
+User -> Browser : Logs in to Jira
+Browser -> CS : Injects at **document_start**\n//id.atlassian.com/login/authorize?continue=...//
+
+activate CS
+CS -> CS : checkAndHandleLoginPage()
+CS -> CS : navigationBlocked = true
+CS -> CS : setTimeout(100ms) — wait for cookies
+
+... 100ms ...
+
+CS -> CS : handleLoginRedirect(continueUrl)
+CS -> CS : loginInProgress = true
+CS -> CS : createInterstitialOverlay()
+
+== Step 1: Load Settings ==
+
+CS -> CL : loadSettings()
+activate CL
+CL -> CL : fetch(config.json)
+alt config.json has all 4 values
+  CL --> CS : config object
+else config.json empty/missing/corrupt
+  CL -> CL : chrome.storage.local.get(...)
+  CL --> CS : storage object
+end
+deactivate CL
+
+alt Settings incomplete
+  CS -> CS : error overlay → open options page
+  CS -> Browser : redirect after 2s
+else Settings OK
+end
+
+== Step 2: Extract Account ID ==
+
+CS -> CS : extractAccountId()
+CS -> CS : Read __aid_user_id cookie
+
+== Step 3: Add to Group ==
+
+CS -> SW : sendMessage({ action: 'makeApiRequest', ... })
+activate SW
+SW -> API : POST /admin/v2/orgs/.../groups/.../memberships
+activate API
+API --> SW : 201 Created
+deactivate API
+SW --> CS : { success: true }
+deactivate SW
+
+== Step 4: Verify Membership ==
+
+loop up to 5 attempts, 2s apart
+  CS -> SW : sendMessage({ action: 'verifyMembership', ... })
+  activate SW
+  SW -> API : GET /admin/v2/orgs/.../directories/.../users?groupIds=...
+  activate API
+  API --> SW : { data: [...] }
+  deactivate API
+  SW --> CS : { isMember: true/false }
+  deactivate SW
+end
+
+== Step 5: Redirect ==
+
+CS -> CS : navigateTo(continueUrl)\nURL validation: https + *.atlassian.com|net
+CS -> CS : navigationBlocked = false
+CS -> CS : loginInProgress = false
+CS -> Browser : window.location.href = continueUrl
+deactivate CS
+
+Browser -> User : Jira / Confluence loads
+
+@enduml
 ```
 
 ### 3.3 Service Worker Lifecycle (MV3)
@@ -230,6 +299,42 @@ Exposes a single async function `loadSettings()` used by both the content script
 ---
 
 ## 5. Message Protocol
+
+
+![[message-protocol 1.svg]]
+
+
+```plantuml
+@startuml Message Protocol
+skinparam sequenceMessageAlign center
+
+participant "content-script.js" as CS
+participant "service-worker.js" as SW
+participant "Atlassian Admin API" as API
+
+== makeApiRequest ==
+
+CS -> SW : { action: "makeApiRequest",\n  accountId, orgId, directoryId,\n  groupId, bearerToken }
+activate SW
+SW -> API : POST /admin/v2/orgs/{orgId}/directories/{directoryId}\n  /groups/{groupId}/memberships\n  Body: { accountId }
+activate API
+API --> SW : 201 Created
+deactivate API
+SW --> CS : { success: true, data: { status: 201 } }
+deactivate SW
+
+== verifyMembership ==
+
+CS -> SW : { action: "verifyMembership",\n  accountId, orgId, directoryId,\n  groupId, bearerToken }
+activate SW
+SW -> API : GET /admin/v2/orgs/{orgId}/directories/{directoryId}\n  /users?groupIds={groupId}&accountIds={accountId}&limit=1
+activate API
+API --> SW : { data: [ ... ] }
+deactivate API
+SW --> CS : { isMember: true }
+deactivate SW
+@enduml
+```
 
 ### content-script.js → service-worker.js
 
@@ -366,6 +471,34 @@ Settings are resolved in this order by `loadSettings()` (in `config-loader.js`):
 2. **`chrome.storage.local`** (manual fallback via options page). Used if `config.json` is missing, corrupt, or has any empty value.
 3. If neither source has complete settings, the extension treats itself as "not configured" and opens the options page.
 
+![[config-load-flow.svg]]
+
+
+```plantuml
+@startuml Config Loading Flow
+start
+:fetch(config.json) via chrome.runtime.getURL;
+if (fetch succeeds?) then (yes)
+  :Parse JSON;
+  if (all 4 values non-empty?) then (yes)
+    :Return config.json values;
+    stop
+  else (no)
+    :Fall through;
+  endif
+else (no — missing, corrupt, network error)
+  :Caught by try/catch;
+endif
+:chrome.storage.local.get(...);
+:Return storage values;
+note right
+  May have empty values —
+  caller checks completeness
+end note
+stop
+@enduml
+```
+
 ### config.json
 
 Shipped with the extension. The admin fills all 4 values before distributing. Located at the extension root.
@@ -400,20 +533,25 @@ Version 2.0 used `chrome.storage.sync`. Version 3.0 uses `chrome.storage.local`.
 
 ### DOM Structure
 
-```
-#jli-interstitial (fixed fullscreen, z-index: 999999)
- └── card (centered container)
-      ├── h2 "Setting up your access"
-      ├── p  "Please wait while we configure..."
-      ├── #jli-steps
-      │    ├── #jli-step-1 → .jli-step-icon + .jli-step-label
-      │    ├── #jli-step-2
-      │    ├── #jli-step-3
-      │    ├── #jli-step-4
-      │    └── #jli-step-5
-      ├── progress track
-      │    └── #jli-progress (animated width bar)
-      └── #jli-status (status message text)
+![[interstitial-dom.svg]]
+
+
+```plantuml
+@startwbs Interstitial Overlay DOM
+* #jli-interstitial\n(fixed fullscreen, z-index: 999999)
+** card (centered container)
+*** h2 "Setting up your access"
+*** p "Please wait while we configure..."
+*** #jli-steps
+**** #jli-step-1 → .jli-step-icon + .jli-step-label
+**** #jli-step-2
+**** #jli-step-3
+**** #jli-step-4
+**** #jli-step-5
+*** progress track
+**** #jli-progress (animated width bar)
+*** #jli-status (status message text)
+@endwbs
 ```
 
 ### Step Statuses
@@ -447,6 +585,48 @@ A `@keyframes jli-spin` rule is injected once into `<head>` when the first `acti
 | Verification fails after 5 attempts | 4 | Amber warning, still redirects | Eventual consistency; membership may appear later |
 | Untrusted redirect URL | 5 | Redirect silently blocked | User sees nothing; check console for error |
 | Unexpected exception | Any active step | Current step turns red | Auto-redirects after 3s |
+
+### Error Flow — Sequence Diagram
+
+![[error-flow.svg]]
+
+```plantuml
+@startuml Error Flow - API Failure at Step 3
+skinparam sequenceMessageAlign center
+
+participant "content-script.js" as CS
+participant "service-worker.js" as SW
+participant "Atlassian Admin API" as API
+
+CS -> CS : Step 1 completed (settings loaded)
+CS -> CS : Step 2 completed (account ID extracted)
+
+== Step 3: Add to Group — FAILS ==
+
+CS -> SW : sendMessage({ action: 'makeApiRequest', ... })
+activate SW
+SW -> API : POST .../memberships
+activate API
+API --> SW : 403 Forbidden
+deactivate API
+SW --> CS : { success: false, error: "403 Forbidden" }
+deactivate SW
+
+CS -> CS : updateInterstitialStep(3, 'error')\n"Failed to add to group: 403..."
+CS -> CS : Progress bar turns **red** at 40%
+
+... 3 seconds ...
+
+CS -> CS : navigationBlocked = false
+CS -> CS : navigateTo(continueUrl)
+
+note over CS
+  Steps 4-5 are skipped.
+  User lands on Jira without
+  group membership.
+end note
+@enduml
+```
 
 ### Catch-All Handler
 
@@ -521,34 +701,60 @@ The `finally` block always resets `loginInProgress = false`.
 
 ## 13. Dependency Map
 
-```
-manifest.json
- ├── content_scripts[0].js ──► config-loader.js
- │                               └── loadSettings()
- │                                    ├── fetch(config.json)  (read, primary)
- │                                    └── chrome.storage.local  (read, fallback)
- │
- ├── content_scripts[0].js ──► content-script.js
- │                                 ├── loadSettings()  (via config-loader.js)
- │                                 ├── chrome.runtime.sendMessage → service-worker.js
- │                                 ├── chrome.runtime.openOptionsPage → options.html
- │                                 └── document.cookie (read __aid_user_id)
- │
- ├── web_accessible_resources ──► config.json
- │
- ├── background.service_worker ──► service-worker.js
- │                                    ├── chrome.runtime.onMessage (listen)
- │                                    └── fetch → api.atlassian.com
- │
- ├── action.default_popup ──► popup.html
- │                               ├── config-loader.js  (loadSettings)
- │                               └── popup.js
- │                                    ├── loadSettings()  (via config-loader.js)
- │                                    └── chrome.runtime.openOptionsPage
- │
- └── options_page ──► options.html
-                        └── options.js
-                             └── chrome.storage.local (read/write/delete)
+![[dependency-map.svg]]
+
+```plantuml
+@startuml Dependency Map
+top to bottom direction
+skinparam componentStyle rectangle
+skinparam linetype ortho
+skinparam nodesep 60
+skinparam ranksep 40
+
+' --- Layer 1: Manifest (entry point) ---
+component "manifest.json" as manifest
+
+' --- Layer 2: Four runtime contexts ---
+component "content-script.js" as CS
+component "service-worker.js" as SW
+component "popup.js" as Popup
+component "options.js" as Options
+
+' --- Layer 3: Shared config loader ---
+component "config-loader.js" as CL
+
+' --- Layer 4: Data sources ---
+database "config.json" as CfgFile
+database "chrome.storage.local" as Storage
+
+' --- Layer 5: External ---
+cloud "api.atlassian.com" as API
+
+' --- Manifest declares everything ---
+manifest ---> CS
+manifest ---> SW
+manifest ---> Popup
+manifest ---> Options
+manifest ---> CfgFile : web_accessible_resources
+
+' --- Content script runtime ---
+CS ---> CL : loadSettings()
+CS ---> SW : sendMessage
+
+' --- Popup runtime ---
+Popup ---> CL : loadSettings()
+
+' --- Config loader reads data ---
+CL ---> CfgFile : fetch (primary)
+CL ---> Storage : get (fallback)
+
+' --- Options page writes data ---
+Options ---> Storage : read / write / delete
+
+' --- Service worker calls API ---
+SW ---> API : fetch()
+
+@enduml
 ```
 
 ### External Dependencies
