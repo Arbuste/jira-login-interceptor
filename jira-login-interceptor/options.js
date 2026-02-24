@@ -16,7 +16,7 @@ const statusMessage = document.getElementById('statusMessage');
 
 // Load saved settings
 function loadSettings() {
-  chrome.storage.sync.get(['orgId', 'directoryId', 'groupId', 'bearerToken'], (result) => {
+  chrome.storage.local.get(['orgId', 'directoryId', 'groupId', 'bearerToken'], (result) => {
     if (result.orgId) {
       orgIdInput.value = result.orgId;
     }
@@ -35,42 +35,42 @@ function loadSettings() {
 // Save settings
 form.addEventListener('submit', (e) => {
   e.preventDefault();
-  
+
   const orgId = orgIdInput.value.trim();
   const directoryId = directoryIdInput.value.trim();
   const groupId = groupIdInput.value.trim();
   const bearerToken = bearerTokenInput.value.trim();
-  
+
   // Validation
   if (!orgId || !directoryId || !groupId || !bearerToken) {
     showStatus('Please fill in all required fields (*)', 'error');
     return;
   }
-  
+
   // Validate UUIDs (basic check)
   const uuidRegex = /^[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}$/i;
   if (!uuidRegex.test(orgId)) {
     showStatus('Organization ID does not appear to be a valid UUID', 'error');
     return;
   }
-/*   if (!uuidRegex.test(directoryId)) {
+  if (!uuidRegex.test(directoryId)) {
     showStatus('Directory ID does not appear to be a valid UUID', 'error');
     return;
-  } */
+  }
   if (!uuidRegex.test(groupId)) {
     showStatus('Group ID does not appear to be a valid UUID', 'error');
     return;
   }
-  
+
   // Save to storage
-  chrome.storage.sync.set({
+  chrome.storage.local.set({
     orgId: orgId,
     directoryId: directoryId,
     groupId: groupId,
     bearerToken: bearerToken
   }, () => {
-    showStatus('✓ Settings saved successfully!', 'success');
-    
+    showStatus('Settings saved successfully!', 'success');
+
     // Clear status after 5 seconds
     setTimeout(() => {
       statusMessage.className = 'status-message';
@@ -81,7 +81,7 @@ form.addEventListener('submit', (e) => {
 // Reset button
 resetBtn.addEventListener('click', () => {
   if (confirm('Are you sure you want to clear all settings? This cannot be undone.')) {
-    chrome.storage.sync.remove(['orgId', 'directoryId', 'groupId', 'bearerToken'], () => {
+    chrome.storage.local.remove(['orgId', 'directoryId', 'groupId', 'bearerToken'], () => {
       orgIdInput.value = '';
       directoryIdInput.value = '';
       groupIdInput.value = '';

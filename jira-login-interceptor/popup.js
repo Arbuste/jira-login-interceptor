@@ -7,18 +7,17 @@ document.addEventListener('DOMContentLoaded', () => {
   setupEventListeners();
 });
 
-function checkStatus() {
-  chrome.storage.sync.get(['orgId', 'directoryId', 'groupId', 'bearerToken'], (result) => {
-    const statusDiv = document.getElementById('status');
-    
-    if (result.orgId && result.directoryId && result.groupId && result.bearerToken) {
-      statusDiv.className = 'status active';
-      statusDiv.textContent = '✓ Extension configured and active';
-    } else {
-      statusDiv.className = 'status inactive';
-      statusDiv.textContent = '✗ Extension not configured. Please set up your group membership settings.';
-    }
-  });
+async function checkStatus() {
+  const result = await loadSettings();
+  const statusDiv = document.getElementById('status');
+
+  if (result.orgId && result.directoryId && result.groupId && result.bearerToken) {
+    statusDiv.className = 'status active';
+    statusDiv.textContent = '✓ Extension configured and active';
+  } else {
+    statusDiv.className = 'status inactive';
+    statusDiv.textContent = '✗ Extension not configured. Please set up your group membership settings.';
+  }
 }
 
 function setupEventListeners() {

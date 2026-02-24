@@ -1,7 +1,7 @@
 /**
  * Service Worker for Group Membership Auto-Joiner
  * Handles API requests on successful login
- * 
+ *
  * Note: Login detection is handled by content-script.js (which runs on the login page)
  * This service worker only handles the API request to add the user to the group
  */
@@ -26,8 +26,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch((error) => {
         sendResponse({success: false, error: error.message});
       });
-    
-    // Return true to indicate we'll send response asynchronously
+    return true;
+  }
+
+  if (request.action === 'verifyMembership') {
+    checkGroupMembership(
+      request.accountId,
+      request.orgId,
+      request.directoryId,
+      request.groupId,
+      request.bearerToken
+    )
+      .then((isMember) => {
+        sendResponse({isMember});
+      })
+      .catch((error) => {
+        sendResponse({isMember: false, error: error.message});
+      });
     return true;
   }
 });
@@ -48,11 +63,8 @@ async function makeApiRequest(accountId, orgId, directoryId, groupId, bearerToke
       accountId: accountId
     };
 
-    console.log('Making API request to add user to group:', {
-      url: apiUrl,
-      accountId: accountId,
-      method: 'POST'
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -61,8 +73,11 @@ async function makeApiRequest(accountId, orgId, directoryId, groupId, bearerToke
         'Accept': 'application/json',
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal: controller.signal
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -74,11 +89,52 @@ async function makeApiRequest(accountId, orgId, directoryId, groupId, bearerToke
     if (!contentType || !contentType.includes('application/json')) {
       return { status: response.status, statusText: response.statusText };
     }
-    
+
     const data = await response.json();
     return data;
   } catch (error) {
     console.error('API request error:', error);
     throw error;
   }
+}
+
+/**
+ * Check whether a user is a member of a group by querying the
+ * directory users endpoint filtered by both groupId and accountId.
+ * If the response contains at least one user, the membership exists.
+ *
+ * @param {string} accountId - The user's account ID
+ * @param {string} orgId - The organization ID
+ * @param {string} directoryId - The directory ID
+ * @param {string} groupId - The group ID
+ * @param {string} bearerToken - The API token for authentication
+ * @returns {Promise<boolean>} true if user is in the group
+ */
+async function checkGroupMembership(accountId, orgId, directoryId, groupId, bearerToken) {
+  const apiUrl = `https://api.atlassian.com/admin/v2/orgs/${orgId}/directories/${directoryId}/users?groupIds=${encodeURIComponent(groupId)}&accountIds=${encodeURIComponent(accountId)}&limit=1`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  const response = await fetch(apiUrl, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${bearerToken}`,
+      'Accept': 'application/json'
+    },
+    signal: controller.signal
+  });
+
+  clearTimeout(timeoutId);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Membership check failed with status ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  // The endpoint returns a list of users matching both filters.
+  // If the array is non-empty, the user is in the group.
+  const isMember = Array.isArray(data.data) && data.data.length > 0;
+  return isMember;
 }

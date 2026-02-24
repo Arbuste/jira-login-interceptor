@@ -4,12 +4,13 @@ A Chrome extension that automatically adds users to specified Atlassian groups u
 
 ## Features
 
-- 🔍 **Detects Login**: Intercepts requests to `https://id.atlassian.com/login/authorize?continue=XURL`
-- 🏷️ **Auto-Adds User**: Extracts `__aid_user_id` cookie and adds user to group
-- 🛑 **Pauses Navigation**: Prevents redirect until group membership is confirmed
-- 📡 **Secure API Call**: Uses Atlassian Admin API v2 with Bearer token authentication
-- 🔒 **Secure**: Stores credentials in Chrome's sync storage
-- ⚙️ **Configurable**: Easy-to-use settings page for group configuration
+- **Detects Login**: Intercepts requests to `https://id.atlassian.com/login/authorize?continue=XURL`
+- **Auto-Adds User**: Extracts `__aid_user_id` cookie and adds user to group
+- **Pauses Navigation**: Prevents redirect until group membership is confirmed
+- **Secure API Call**: Uses Atlassian Admin API v2 with Bearer token authentication
+- **Secure**: Stores credentials in Chrome's local storage (on-device only)
+- **Pre-configurable**: Admin fills `config.json` before distributing — no user setup needed
+- **Fallback**: Options page available for manual configuration if `config.json` is empty
 
 ## Installation
 
@@ -41,6 +42,32 @@ A Chrome extension that automatically adds users to specified Atlassian groups u
 
 ## Configuration
 
+### Option A: Pre-fill `config.json` (recommended for distribution)
+
+The admin fills the `config.json` file bundled with the extension **before** distributing it to end users. This way, users don't need to configure anything.
+
+1. Open `config.json` in the extension folder
+2. Fill in all 4 values:
+
+```json
+{
+  "orgId": "your-org-uuid",
+  "directoryId": "your-directory-uuid",
+  "groupId": "your-group-uuid",
+  "bearerToken": "your-api-token"
+}
+```
+
+3. Distribute the extension folder to users — it will work out of the box.
+
+### Option B: Manual configuration via options page (fallback)
+
+If `config.json` is left empty (or missing), users can configure the extension manually:
+
+1. Click the extension icon in Chrome toolbar
+2. Click "Configure Settings"
+3. Enter the 4 required values and click "Save Settings"
+
 ### Required Settings
 
 1. **Organization ID**: Your Atlassian organization's unique ID
@@ -52,12 +79,12 @@ A Chrome extension that automatically adds users to specified Atlassian groups u
 
 #### Organization ID & Directory ID
 1. Go to your Atlassian admin console: `https://admin.atlassian.com`
-2. Navigate to **Organization settings** → **Identity & Access**
+2. Navigate to **Organization settings** > **Identity & Access**
 3. Go to **Directories** to find your Directory ID
 4. Your Organization ID is visible in the URL or admin settings
 
 #### Group ID
-1. In the admin console, go to **People** → **Groups**
+1. In the admin console, go to **People** > **Groups**
 2. Find the group you want users to auto-join
 3. The Group ID is shown in the group details (UUID format)
 
@@ -67,7 +94,7 @@ A Chrome extension that automatically adds users to specified Atlassian groups u
 3. Give it a descriptive name: "Group Auto-Joiner"
 4. Copy the token and paste into extension settings
 
-**⚠️ IMPORTANT**: Keep your API token secret! Anyone with this token can manage your Atlassian groups.
+**IMPORTANT**: Keep your API token secret! Anyone with this token can manage your Atlassian groups.
 
 ## How It Works
 
@@ -76,12 +103,12 @@ A Chrome extension that automatically adds users to specified Atlassian groups u
 ```
 1. User visits Jira/Confluence and logs in
 2. Login successful, redirects to: https://id.atlassian.com/login/authorize?continue=REDIRECT_URL
-3. Extension detects this request
-4. Extension extracts __aid_user_id from login cookies
-5. Extension pauses navigation
-6. Extension calls Atlassian Admin API to add user to group
-7. API confirms group membership added
-8. Extension navigates to REDIRECT_URL
+3. Content script detects this page and blocks navigation
+4. Content script extracts __aid_user_id from login cookies
+5. Content script sends message to service worker
+6. Service worker calls Atlassian Admin API to add user to group
+7. Service worker verifies group membership
+8. Content script navigates to REDIRECT_URL
 ```
 
 ### Request Details
@@ -105,28 +132,15 @@ Accept: application/json
 Content-Type: application/json
 ```
 
-## How It Works
-
-### Flow Diagram
-
-```
-1. User logs in to Jira
-2. Login successful, redirect to: https://id.atlassian.com/login/authorize?continue=REDIRECT_URL
-3. Extension detects this request (content script)
-4. Navigation is paused
-5. Content script sends message to service worker
-6. Service worker makes API request with stored credentials
-7. Service worker sends response back to content script
-8. Content script navigates to REDIRECT_URL
-```
-
 ### Components
 
 - **manifest.json**: Extension configuration and permissions
+- **config.json**: Admin-provided configuration (pre-filled before distribution)
+- **config-loader.js**: Shared settings loader (tries config.json, falls back to chrome.storage.local)
 - **service-worker.js**: Background service worker that handles API requests
 - **content-script.js**: Runs on login pages, intercepts navigation
 - **popup.html/js**: Quick access popup showing extension status
-- **options.html/js**: Settings page for configuration
+- **options.html/js**: Settings page for manual configuration (fallback)
 
 ## Troubleshooting
 
@@ -160,9 +174,11 @@ Content-Type: application/json
 
 ## Security Considerations
 
-- API tokens are stored in Chrome's `sync` storage, which is encrypted
+- When using `config.json`, the bearer token is bundled with the extension files. Only distribute to trusted users.
+- API tokens are stored in Chrome's `local` storage (on-device only) when using the options page fallback
 - Tokens are only sent via HTTPS to Atlassian servers
 - The extension only intercepts Jira login redirects
+- Redirect URLs are validated against trusted Atlassian domains
 - Consider creating a dedicated API token for this extension (easier to revoke if needed)
 
 ## Development
@@ -191,15 +207,15 @@ Replace with your actual IDs and token to verify the endpoint is accessible and 
 
 ## Permissions Explained
 
-- `webRequest`: Required to intercept login requests
 - `tabs`: Required to send messages to content scripts
 - `storage`: Required to store API credentials
 - `host_permissions`: Required to access Atlassian domains
+- Content scripts handle login detection on `id.atlassian.com/login/authorize` pages
 
 ## Limitations
 
 - Only works on https://id.atlassian.com/login/authorize URLs
-- Requires manual configuration of Organization ID, Directory ID, Group ID, and API token
+- Requires configuration via `config.json` (admin) or the options page (manual fallback)
 - Chrome only (not available for Firefox, Safari, etc.)
 - The `__aid_user_id` cookie must be present in the login request (always present in standard Atlassian login flow)
 - Only adds a single user to a single group - to add users to multiple groups, install multiple instances with different settings
@@ -217,7 +233,7 @@ For issues or questions:
 
 ---
 
-**Version**: 2.0  
-**Last Updated**: 2026-02-19  
-**API Used**: Atlassian Admin API v2  
+**Version**: 3.0
+**Last Updated**: 2026-02-24
+**API Used**: Atlassian Admin API v2
 **Endpoint**: POST `/admin/v2/orgs/{orgId}/directories/{directoryId}/groups/{groupId}/memberships`
