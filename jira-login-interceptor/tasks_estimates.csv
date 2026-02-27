@@ -1,0 +1,21 @@
+Epic,Task,Estimate (Days),Notes
+1: Extension Scaffolding & Configuration Strategy,TASK-101: Create Extension Manifest and Scaffolding,0.5,manifest.json
+1: Extension Scaffolding & Configuration Strategy,TASK-102: Develop Options Page (UI & Logic),0.5,"options.html, options.js"
+1: Extension Scaffolding & Configuration Strategy,TASK-103: Implement Admin Config Loader,0.5,config-loader.js
+1: Extension Scaffolding & Configuration Strategy,TASK-104: Build Toolbar Popup UI,0.5,"popup.html, popup.js"
+2: Content Script & UI Override Layer,TASK-201: Login Interception & Navigation Blocking,0.5,content-script.js injection
+2: Content Script & UI Override Layer,TASK-202: Extract Atlassian Account ID,0.5,__aid_user_id cookie logic
+2: Content Script & UI Override Layer,TASK-203: Develop Interstitial Overlay Framework,1.0,"DOM injection, CSS animations"
+3: API & Service Worker Architecture,TASK-301: Setup Service Worker Message Listeners,0.5,chrome.runtime.onMessage context
+3: API & Service Worker Architecture,TASK-302: API Integration: Add to Group (POST),0.5,fetch and abort controllers
+3: API & Service Worker Architecture,TASK-303: API Integration: Verify Membership (GET),0.5,fetch and abort controllers
+"4: Orchestration, Flow Control & Security",TASK-401: Implement Core Login Intercept Flow (State Machine),1.0,handleLoginRedirect flow
+"4: Orchestration, Flow Control & Security",TASK-402: Verification Polling & Retry Logic,0.5,Retry loop
+"4: Orchestration, Flow Control & Security",TASK-403: Security: Open Redirect Protection,0.5,Domain allowlist and validation
+"4: Orchestration, Flow Control & Security",TASK-404: Global Error Handling & Recovery Escape Hatches,1.0,Global catch and auto-redirect
+5: Quality Assurance & Documentation,TASK-501: Code Cleanup & Logging Hygiene,0.5,"Remove PII, standardize logging"
+5: Quality Assurance & Documentation,"TASK-502: User & Admin Documentation writing (README, QUICKSTART)",0.5,"README.md, QUICKSTART.md"
+5: Quality Assurance & Documentation,TASK-503: Technical specification writing (TECHNICAL.md),1.0,"TECHNICAL.md (Architecture, runtime, etc)"
+5: Quality Assurance & Documentation,TASK-504: Test Planning (TEST-PLAN.md),0.5,"TEST-PLAN.md (Happy path, error state test cases)"
+5: Quality Assurance & Documentation,TASK-505: Testing (Manual & Edge Cases Execution),1.5,Cross-checking with TEST-PLAN
+Total,,12.5,
