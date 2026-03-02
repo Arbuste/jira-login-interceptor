@@ -110,11 +110,21 @@
             background-color: #003d99;
         }
         
+        #loadConfigBtn {
+            background-color: #e8f4f8;
+            color: #0052cc;
+            border: 1px solid #0052cc;
+        }
+
+        #loadConfigBtn:hover {
+            background-color: #d0e8f0;
+        }
+
         #resetBtn {
             background-color: #f0f0f0;
             color: #333;
         }
-        
+
         #resetBtn:hover {
             background-color: #e0e0e0;
         }
@@ -235,6 +245,7 @@
             
             <div class="button-group">
                 <button type="submit" id="saveBtn">Save Settings</button>
+                <button type="button" id="loadConfigBtn">Load from config.json</button>
                 <button type="button" id="resetBtn">Clear All</button>
             </div>
         </form>

@@ -1,13 +1,33 @@
 /**
  * Content Script for Login Interception
  * Runs on https://id.atlassian.com/login/authorize pages
+ * Injected at document_start.
+ *
+ * navigation-blocker.js (MAIN world) runs first to intercept
+ * location.assign/replace. This script handles the interstitial UI.
  */
 
-let navigationBlocked = false;
+let navigationBlocked = true; // blocked from the start — only unblocked on user click
 let overlayElement = null;
 let loginInProgress = false;
 
 console.log('Jira Login Interceptor content script loaded');
+
+// MutationObserver to remove meta refresh tags and block form submissions
+const jliObserver = new MutationObserver((mutations) => {
+  for (const mutation of mutations) {
+    for (const node of mutation.addedNodes) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (node.tagName === 'META' && node.httpEquiv && node.httpEquiv.toLowerCase() === 'refresh') {
+        node.remove();
+      }
+      if (node.tagName === 'FORM') {
+        node.addEventListener('submit', (e) => { if (navigationBlocked) e.preventDefault(); }, true);
+      }
+    }
+  }
+});
+jliObserver.observe(document.documentElement || document, { childList: true, subtree: true });
 
 /**
  * Step definitions for the interstitial overlay
@@ -74,13 +94,27 @@ function createInterstitialOverlay() {
     `;
     icon.textContent = i + 1;
 
+    const textCol = document.createElement('div');
+    textCol.style.cssText = 'display: flex; flex-direction: column; gap: 4px; min-width: 0;';
+
     const label = document.createElement('span');
     label.className = 'jli-step-label';
     label.style.cssText = 'font-size: 14px; color: #484f58; transition: color 0.3s ease;';
     label.textContent = step.label;
 
+    const detail = document.createElement('div');
+    detail.className = 'jli-step-detail';
+    detail.style.cssText = `
+      font-size: 12px; color: #8b949e; display: none;
+      font-family: 'Courier New', monospace; word-break: break-all;
+      background: #0d1117; border: 1px solid #30363d; border-radius: 4px;
+      padding: 6px 8px; margin-top: 2px; white-space: pre-wrap;
+    `;
+
+    textCol.appendChild(label);
+    textCol.appendChild(detail);
     row.appendChild(icon);
-    row.appendChild(label);
+    row.appendChild(textCol);
     stepsList.appendChild(row);
   });
 
@@ -108,6 +142,20 @@ function createInterstitialOverlay() {
   statusMsg.textContent = 'This usually takes a few seconds';
   card.appendChild(statusMsg);
 
+  // Manual continue button (hidden by default, shown on error)
+  const continueBtn = document.createElement('button');
+  continueBtn.id = 'jli-continue-btn';
+  continueBtn.textContent = 'Continue to destination';
+  continueBtn.style.cssText = `
+    display: none; margin-top: 20px; padding: 10px 24px; font-size: 14px;
+    font-weight: 500; color: #fff; background: #21262d; border: 1px solid #30363d;
+    border-radius: 6px; cursor: pointer; transition: background 0.2s ease;
+    width: 100%; text-align: center;
+  `;
+  continueBtn.addEventListener('mouseenter', () => { continueBtn.style.background = '#30363d'; });
+  continueBtn.addEventListener('mouseleave', () => { continueBtn.style.background = '#21262d'; });
+  card.appendChild(continueBtn);
+
   overlay.appendChild(card);
   document.documentElement.appendChild(overlay);
   overlayElement = overlay;
@@ -119,13 +167,15 @@ function createInterstitialOverlay() {
  * @param {number} stepNumber - 1-based step number
  * @param {'active'|'completed'|'warning'|'error'} status
  * @param {string} [message] - optional status message to display
+ * @param {string} [detail] - optional detail text shown inline under the step (for errors/warnings)
  */
-function updateInterstitialStep(stepNumber, status, message) {
+function updateInterstitialStep(stepNumber, status, message, detail) {
   const row = document.getElementById(`jli-step-${stepNumber}`);
   if (!row) return;
 
   const icon = row.querySelector('.jli-step-icon');
   const label = row.querySelector('.jli-step-label');
+  const detailEl = row.querySelector('.jli-step-detail');
   const progress = document.getElementById('jli-progress');
   const statusMsg = document.getElementById('jli-status');
 
@@ -197,6 +247,23 @@ function updateInterstitialStep(stepNumber, status, message) {
       statusMsg.style.color = '#d29922';
     }
   }
+
+  // Show inline detail under the step
+  if (detailEl) {
+    if (detail) {
+      detailEl.textContent = detail;
+      detailEl.style.display = 'block';
+      if (status === 'error') {
+        detailEl.style.borderColor = '#da3633';
+        detailEl.style.color = '#f85149';
+      } else if (status === 'warning') {
+        detailEl.style.borderColor = '#9e6a03';
+        detailEl.style.color = '#d29922';
+      }
+    } else {
+      detailEl.style.display = 'none';
+    }
+  }
 }
 
 /**
@@ -210,10 +277,22 @@ function checkAndHandleLoginPage() {
       const continueUrl = url.searchParams.get('continue');
       if (continueUrl) {
         console.log('Login authorize page detected');
-        // Block navigation immediately to avoid race condition
-        navigationBlocked = true;
-        // Small delay to ensure cookies are fully set after redirect
-        setTimeout(() => {
+        // Don't block yet — check membership first
+        setTimeout(async () => {
+          try {
+            const alreadyMember = await checkMembershipBeforeBlocking();
+            if (alreadyMember) {
+              console.log('User already in group — bypassing interstitial');
+              releaseNavigation();
+              navigateTo(continueUrl);
+              return;
+            }
+          } catch (e) {
+            console.warn('Pre-check failed, showing interstitial:', e);
+          }
+          // User is not in the group (or check failed) — block and show interstitial
+          navigationBlocked = true;
+          window.stop();
           handleLoginRedirect(continueUrl);
         }, 100);
       }
@@ -251,6 +330,43 @@ function sendMessageWithTimeout(message, timeoutMs = 20000) {
 }
 
 /**
+ * Release all navigation blocking so the page can redirect normally.
+ */
+function releaseNavigation() {
+  navigationBlocked = false;
+  jliObserver.disconnect();
+  window.dispatchEvent(new Event('jli-unblock-navigation'));
+}
+
+/**
+ * Quick membership check before showing the interstitial.
+ * If the user is already in the group, returns true so we can bypass entirely.
+ * @returns {Promise<boolean>}
+ */
+async function checkMembershipBeforeBlocking() {
+  const settings = await loadSettings();
+  if (!settings.orgId || !settings.directoryId || !settings.groupId || !settings.bearerToken) {
+    return false; // can't check — let the interstitial handle the error
+  }
+
+  const accountId = extractAccountId();
+  if (!accountId) {
+    return false; // can't check — let the interstitial handle the error
+  }
+
+  const response = await sendMessageWithTimeout({
+    action: 'verifyMembership',
+    accountId,
+    orgId: settings.orgId,
+    directoryId: settings.directoryId,
+    groupId: settings.groupId,
+    bearerToken: settings.bearerToken
+  }, 5000); // short timeout — don't delay the user
+
+  return response && response.isMember === true;
+}
+
+/**
  * Handle the login redirect
  * Pauses navigation and makes API request
  */
@@ -260,6 +376,9 @@ async function handleLoginRedirect(continueUrl) {
   try {
     navigationBlocked = true;
 
+    const STEP_DELAY = 2000; // minimum time each step stays visible
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
     // Show the interstitial overlay immediately
     createInterstitialOverlay();
     updateInterstitialStep(1, 'active', 'Detecting login...');
@@ -268,30 +387,33 @@ async function handleLoginRedirect(continueUrl) {
     const settings = await loadSettings();
 
     if (!settings.orgId || !settings.directoryId || !settings.groupId || !settings.bearerToken) {
+      const missing = ['orgId', 'directoryId', 'groupId', 'bearerToken'].filter(k => !settings[k]);
       console.warn('Group membership settings not configured. Opening options page.');
-      updateInterstitialStep(1, 'error', 'Extension not configured. Opening settings...');
+      updateInterstitialStep(1, 'error', 'Extension not configured. Opening settings...',
+        `Missing fields: ${missing.join(', ')}`);
       openOptionsPage();
-      await new Promise((r) => setTimeout(r, 2000));
-      navigationBlocked = false;
-      allowNavigation(continueUrl);
+      showContinueButton(continueUrl);
       return;
     }
 
+    await wait(STEP_DELAY);
     updateInterstitialStep(1, 'completed');
 
     // Step 2: Extract account ID
     updateInterstitialStep(2, 'active', 'Extracting account ID...');
 
     const accountId = extractAccountId();
+
     if (!accountId) {
       console.error('Could not extract account ID from cookies');
-      updateInterstitialStep(2, 'error', 'Could not extract user account ID. Redirecting...');
-      await new Promise((r) => setTimeout(r, 3000));
-      navigationBlocked = false;
-      allowNavigation(continueUrl);
+      const cookieNames = document.cookie.split(';').map(c => c.trim().split('=')[0]).filter(Boolean);
+      updateInterstitialStep(2, 'error', 'Could not extract user account ID.',
+        `Cookie "__aid_user_id" not found.\nAvailable cookies: ${cookieNames.length ? cookieNames.join(', ') : '(none)'}`);
+      showContinueButton(continueUrl);
       return;
     }
 
+    await wait(STEP_DELAY);
     updateInterstitialStep(2, 'completed');
 
     // Step 3: Add to group
@@ -308,13 +430,13 @@ async function handleLoginRedirect(continueUrl) {
 
     if (!response.success) {
       console.error('API request failed:', response.error);
-      updateInterstitialStep(3, 'error', `Failed to add to group: ${response.error}. Redirecting...`);
-      await new Promise((r) => setTimeout(r, 3000));
-      navigationBlocked = false;
-      allowNavigation(continueUrl);
+      updateInterstitialStep(3, 'error', 'Failed to add to group.',
+        `Error: ${response.error}\nOrg: ${settings.orgId}\nDirectory: ${settings.directoryId}\nGroup: ${settings.groupId}\nAccount: ${accountId}`);
+      showContinueButton(continueUrl);
       return;
     }
 
+    await wait(STEP_DELAY);
     updateInterstitialStep(3, 'completed');
 
     // Step 4: Verify membership
@@ -329,20 +451,21 @@ async function handleLoginRedirect(continueUrl) {
     );
 
     if (verified) {
+      await wait(STEP_DELAY);
       updateInterstitialStep(4, 'completed', 'Membership confirmed!');
     } else {
-      console.warn('Could not confirm membership — redirecting anyway');
-      updateInterstitialStep(4, 'warning', 'Could not confirm membership. Redirecting anyway...');
+      console.warn('Could not confirm membership');
+      updateInterstitialStep(4, 'warning', 'Could not confirm membership.',
+        `Polled 5 times with 2s delay. The user may not yet appear in the group.\nAccount: ${accountId}\nGroup: ${settings.groupId}`);
+      showContinueButton(continueUrl);
+      return;
     }
 
-    // Step 5: Redirect
+    // Step 5: Wait with countdown then redirect
     updateInterstitialStep(5, 'active', 'Redirecting to your destination...');
-    await new Promise((r) => setTimeout(r, 500));
-    updateInterstitialStep(5, 'completed', 'All done! Redirecting now...');
-    await new Promise((r) => setTimeout(r, 300));
-
-    navigationBlocked = false;
-    allowNavigation(continueUrl);
+    await wait(STEP_DELAY);
+    updateInterstitialStep(5, 'completed', 'All done!');
+    showContinueButton(continueUrl);
   } catch (error) {
     console.error('Error handling login redirect:', error);
     // Mark whichever step is currently active as errored
@@ -351,17 +474,46 @@ async function handleLoginRedirect(continueUrl) {
       if (row) {
         const icon = row.querySelector('.jli-step-icon');
         if (icon && icon.querySelector('svg[style*="jli-spin"]')) {
-          updateInterstitialStep(i, 'error', `Error: ${error.message}. Redirecting...`);
+          updateInterstitialStep(i, 'error', `Unexpected error at step ${i}.`,
+            `${error.message}\n${error.stack || ''}`);
           break;
         }
       }
     }
-    await new Promise((r) => setTimeout(r, 3000));
-    navigationBlocked = false;
-    allowNavigation(continueUrl);
+    showContinueButton(continueUrl);
   } finally {
     loginInProgress = false;
   }
+}
+
+/**
+ * Show the continue button with a 30-second countdown, then auto-redirect.
+ * The user can click anytime to proceed immediately.
+ * @param {string} continueUrl - The URL to navigate to when the button is clicked
+ */
+function showContinueButton(continueUrl) {
+  const btn = document.getElementById('jli-continue-btn');
+  if (!btn) return;
+
+  let seconds = 30;
+  btn.textContent = `Continue to destination (${seconds}s)`;
+  btn.style.display = 'block';
+
+  const countdown = setInterval(() => {
+    seconds--;
+    btn.textContent = `Continue to destination (${seconds}s)`;
+    if (seconds <= 0) {
+      clearInterval(countdown);
+      navigationBlocked = false;
+      allowNavigation(continueUrl);
+    }
+  }, 1000);
+
+  btn.addEventListener('click', () => {
+    clearInterval(countdown);
+    navigationBlocked = false;
+    allowNavigation(continueUrl);
+  }, { once: true });
 }
 
 /**
@@ -387,6 +539,7 @@ function navigateTo(url) {
       console.error('Blocked redirect to untrusted URL:', url);
       return;
     }
+    releaseNavigation();
     window.location.href = url;
   } catch (error) {
     console.error('Failed to navigate:', error);
