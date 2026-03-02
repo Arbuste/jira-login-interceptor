@@ -1,79 +1,55 @@
 /**
  * Service Worker for Group Membership Auto-Joiner
- * Handles API requests on successful login
- *
- * Note: Login detection is handled by content-script.js (which runs on the login page)
- * This service worker only handles the API request to add the user to the group
+ * Proxies requests from the content script to the Forge webtrigger endpoint.
  */
 
 console.log('Group Membership Auto-Joiner service worker initialized');
 
-/**
- * Handle requests from content script to make API calls
- */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'makeApiRequest') {
-    makeApiRequest(
-      request.accountId,
-      request.orgId,
-      request.directoryId,
-      request.groupId,
-      request.bearerToken
-    )
-      .then((response) => {
-        sendResponse({success: true, data: response});
+    callForgeEndpoint(request.forgeEndpointUrl, request.apiKey, 'addToGroup', request.accountId)
+      .then((data) => {
+        sendResponse({ success: true, data });
       })
       .catch((error) => {
-        sendResponse({success: false, error: error.message});
+        sendResponse({ success: false, error: error.message });
       });
     return true;
   }
 
   if (request.action === 'verifyMembership') {
-    checkGroupMembership(
-      request.accountId,
-      request.orgId,
-      request.directoryId,
-      request.groupId,
-      request.bearerToken
-    )
-      .then((isMember) => {
-        sendResponse({isMember});
+    callForgeEndpoint(request.forgeEndpointUrl, request.apiKey, 'verifyMembership', request.accountId)
+      .then((data) => {
+        sendResponse({ isMember: data.isMember === true });
       })
       .catch((error) => {
-        sendResponse({isMember: false, error: error.message});
+        sendResponse({ isMember: false, error: error.message });
       });
     return true;
   }
 });
 
 /**
- * Make API request to add user to group
- * @param {string} accountId - The user's account ID
- * @param {string} orgId - The organization ID
- * @param {string} directoryId - The directory ID
- * @param {string} groupId - The group ID
- * @param {string} bearerToken - The API token for authentication
- * @returns {Promise} The API response
+ * Call the Forge webtrigger endpoint.
+ *
+ * @param {string} endpointUrl - The Forge webtrigger URL
+ * @param {string} apiKey - The shared API key
+ * @param {string} action - "addToGroup" or "verifyMembership"
+ * @param {string} accountId - The user's Atlassian account ID
+ * @returns {Promise<Object>} Parsed JSON response
  */
-async function makeApiRequest(accountId, orgId, directoryId, groupId, bearerToken) {
+async function callForgeEndpoint(endpointUrl, apiKey, action, accountId) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
   try {
-    const apiUrl = `https://api.atlassian.com/admin/v2/orgs/${orgId}/directories/${directoryId}/groups/${groupId}/memberships`;
-    const requestBody = {
-      accountId: accountId
-    };
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch(apiUrl, {
+    const response = await fetch(endpointUrl, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${bearerToken}`,
-        'Accept': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify({ action, accountId }),
       signal: controller.signal
     });
 
@@ -81,60 +57,13 @@ async function makeApiRequest(accountId, orgId, directoryId, groupId, bearerToke
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`API request failed with status ${response.status}: ${response.statusText}. Response: ${errorText}`);
+      throw new Error(`Forge endpoint returned ${response.status}: ${errorText}`);
     }
 
-    // Handle responses with no body (204 No Content)
-    const contentType = response.headers.get('content-type');
-    if (!contentType || !contentType.includes('application/json')) {
-      return { status: response.status, statusText: response.statusText };
-    }
-
-    const data = await response.json();
-    return data;
+    return await response.json();
   } catch (error) {
-    console.error('API request error:', error);
+    clearTimeout(timeoutId);
+    console.error('Forge endpoint error:', error);
     throw error;
   }
-}
-
-/**
- * Check whether a user is a member of a group by querying the
- * directory users endpoint filtered by both groupId and accountId.
- * If the response contains at least one user, the membership exists.
- *
- * @param {string} accountId - The user's account ID
- * @param {string} orgId - The organization ID
- * @param {string} directoryId - The directory ID
- * @param {string} groupId - The group ID
- * @param {string} bearerToken - The API token for authentication
- * @returns {Promise<boolean>} true if user is in the group
- */
-async function checkGroupMembership(accountId, orgId, directoryId, groupId, bearerToken) {
-  const apiUrl = `https://api.atlassian.com/admin/v2/orgs/${orgId}/directories/${directoryId}/users?groupIds=${encodeURIComponent(groupId)}&accountIds=${encodeURIComponent(accountId)}&limit=1`;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-  const response = await fetch(apiUrl, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${bearerToken}`,
-      'Accept': 'application/json'
-    },
-    signal: controller.signal
-  });
-
-  clearTimeout(timeoutId);
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Membership check failed with status ${response.status}: ${errorText}`);
-  }
-
-  const data = await response.json();
-  // The endpoint returns a list of users matching both filters.
-  // If the array is non-empty, the user is in the group.
-  const isMember = Array.isArray(data.data) && data.data.length > 0;
-  return isMember;
 }

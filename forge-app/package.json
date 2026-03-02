@@ -1,0 +1,29 @@
+{
+  "name": "group-autojoiner-forge",
+  "version": "1.0.0",
+  "private": true,
+  "main": "out/index.js",
+  "scripts": {
+    "build": "tsc && npm run build:ui",
+    "build:ui": "cd admin-config && npm install && npm run build",
+    "typecheck": "tsc --noEmit",
+    "lint": "forge lint",
+    "deploy": "forge deploy",
+    "install-app": "forge install",
+    "tunnel": "forge tunnel",
+    "logs": "forge logs --tail"
+  },
+  "dependencies": {
+    "@forge/api": "^6.4.0",
+    "@forge/resolver": "^1.6.0",
+    "@forge/kvs": "^1.2.0"
+  },
+  "devDependencies": {
+    "@forge/cli": "^10.0.0",
+    "typescript": "^5.9.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

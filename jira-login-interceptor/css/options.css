@@ -83,6 +83,7 @@ textarea {
 
 .button-group {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 30px;
 }
@@ -114,6 +115,16 @@ button {
 }
 
 #loadConfigBtn:hover {
+  background-color: #d0e8f0;
+}
+
+#testBtn {
+  background-color: #e8f4f8;
+  color: #0052cc;
+  border: 1px solid #0052cc;
+}
+
+#testBtn:hover {
   background-color: #d0e8f0;
 }
 
@@ -173,4 +184,63 @@ code {
   border-radius: 3px;
   font-family: 'Courier New', monospace;
   font-size: 12px;
+}
+
+/* ── Drop zone ──────────────────────────────────────────────────── */
+
+.drop-zone {
+  border: 2px dashed #ccc;
+  border-radius: 8px;
+  padding: 28px 20px;
+  text-align: center;
+  margin-bottom: 25px;
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.drop-zone:hover {
+  border-color: #0052cc;
+  background-color: #f8fbff;
+}
+
+.drop-zone.dragover {
+  border-color: #0052cc;
+  background-color: #e8f0fe;
+}
+
+.drop-zone.drop-success {
+  border-color: #4CAF50;
+  background-color: #e8f5e9;
+}
+
+.drop-zone.drop-error {
+  border-color: #f44336;
+  background-color: #ffebee;
+}
+
+.drop-zone-content {
+  pointer-events: none;
+}
+
+.drop-zone-icon {
+  width: 32px;
+  height: 32px;
+  color: #999;
+  margin-bottom: 8px;
+}
+
+.drop-zone:hover .drop-zone-icon,
+.drop-zone.dragover .drop-zone-icon {
+  color: #0052cc;
+}
+
+.drop-zone-content p {
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.drop-zone-hint {
+  font-size: 12px;
+  color: #999;
 }

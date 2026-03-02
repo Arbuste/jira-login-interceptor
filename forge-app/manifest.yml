@@ -1,0 +1,35 @@
+modules:
+  jira:adminPage:
+    - key: group-autojoiner-admin-config
+      resource: adminConfigResource
+      resolver:
+        function: resolver
+      title: Group Auto-Joiner Config
+
+  webtrigger:
+    - key: group-autojoiner-webtrigger
+      function: webtriggerHandler
+
+  function:
+    - key: resolver
+      handler: index.resolver
+    - key: webtriggerHandler
+      handler: index.webtriggerHandler
+
+resources:
+  - key: adminConfigResource
+    path: admin-config/build
+
+permissions:
+  scopes:
+    - storage:app
+  external:
+    fetch:
+      backend:
+        - address: 'https://api.atlassian.com'
+          inScopeEUD: false
+
+app:
+  runtime:
+    name: nodejs22.x
+  id: ari:cloud:ecosystem::app/7b4ceebe-af0f-4e93-bf0f-5e657c12b253

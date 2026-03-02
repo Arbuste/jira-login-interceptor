@@ -9,74 +9,60 @@
 <body>
     <div class="container">
         <h1>Jira Login Interceptor</h1>
-        <p class="subtitle">Configure your API credentials</p>
+        <p class="subtitle">Configure your Forge endpoint connection</p>
 
         <div id="statusMessage" class="status-message"></div>
 
         <div class="info-box">
-            <strong>How to get your credentials:</strong><br>
-            1. Go to <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank">Atlassian API Tokens</a><br>
-            2. Click "Create API token"<br>
-            3. Copy the token and paste it below<br>
-            4. Get your API URL from your Jira instance
+            <strong>How to set up:</strong><br>
+            1. Deploy the Forge app to your Atlassian site<br>
+            2. Configure org/directory/group in the Jira admin panel<br>
+            3. Copy the webtrigger URL and API key below
+        </div>
+
+        <div id="dropZone" class="drop-zone">
+            <div class="drop-zone-content">
+                <svg class="drop-zone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <p>Drop <code>config.json</code> here to import settings</p>
+                <span class="drop-zone-hint">or click to browse</span>
+            </div>
+            <input type="file" id="fileInput" accept=".json,application/json" hidden>
         </div>
 
         <form id="settingsForm">
             <div class="form-group">
-                <label for="orgId">Organization ID *</label>
+                <label for="forgeEndpointUrl">Forge Endpoint URL *</label>
                 <input
-                    type="text"
-                    id="orgId"
-                    placeholder="e.g., a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    type="url"
+                    id="forgeEndpointUrl"
+                    placeholder="https://..."
                     required
                 >
                 <div class="help-text">
-                    Your Atlassian organization ID
+                    The webtrigger URL from your deployed Forge app
                 </div>
             </div>
 
             <div class="form-group">
-                <label for="directoryId">Directory ID *</label>
-                <input
-                    type="text"
-                    id="directoryId"
-                    placeholder="e.g., a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-                    required
-                >
-                <div class="help-text">
-                    The directory ID where the group is located
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label for="groupId">Group ID *</label>
-                <input
-                    type="text"
-                    id="groupId"
-                    placeholder="e.g., a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-                    required
-                >
-                <div class="help-text">
-                    The group ID to add the user to on login
-                </div>
-            </div>
-
-            <div class="form-group">
-                <label for="bearerToken">Bearer Token (API Token) *</label>
+                <label for="apiKey">API Key *</label>
                 <input
                     type="password"
-                    id="bearerToken"
-                    placeholder="Enter your Atlassian API token"
+                    id="apiKey"
+                    placeholder="Enter the shared API key"
                     required
                 >
                 <div class="help-text">
-                    Your Atlassian API token for authentication. Get one at: <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank">Atlassian API Tokens</a>
+                    The API key set via <code>forge variables set --encrypt API_KEY</code>
                 </div>
             </div>
 
             <div class="button-group">
                 <button type="submit" id="saveBtn">Save Settings</button>
-                <button type="button" id="loadConfigBtn">Load from config.json</button>
+                <button type="button" id="testBtn">Test Connection</button>
                 <button type="button" id="resetBtn">Clear All</button>
             </div>
         </form>

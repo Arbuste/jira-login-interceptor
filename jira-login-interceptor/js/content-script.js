@@ -273,7 +273,7 @@ function sendMessageWithTimeout(message, timeoutMs = 20000) {
 
 async function checkMembershipBeforeBlocking() {
   const settings = await loadSettings();
-  if (!settings.orgId || !settings.directoryId || !settings.groupId || !settings.bearerToken) {
+  if (!settings.forgeEndpointUrl || !settings.apiKey) {
     return false;
   }
 
@@ -285,10 +285,8 @@ async function checkMembershipBeforeBlocking() {
   const response = await sendMessageWithTimeout({
     action: 'verifyMembership',
     accountId,
-    orgId: settings.orgId,
-    directoryId: settings.directoryId,
-    groupId: settings.groupId,
-    bearerToken: settings.bearerToken
+    forgeEndpointUrl: settings.forgeEndpointUrl,
+    apiKey: settings.apiKey
   }, 5000);
 
   return response && response.isMember === true;
@@ -312,8 +310,8 @@ async function handleLoginRedirect(continueUrl) {
     // Step 1: Load settings
     const settings = await loadSettings();
 
-    if (!settings.orgId || !settings.directoryId || !settings.groupId || !settings.bearerToken) {
-      const missing = ['orgId', 'directoryId', 'groupId', 'bearerToken'].filter(k => !settings[k]);
+    if (!settings.forgeEndpointUrl || !settings.apiKey) {
+      const missing = ['forgeEndpointUrl', 'apiKey'].filter(k => !settings[k]);
       updateInterstitialStep(1, 'error', 'Extension not configured. Opening settings...',
         `Missing fields: ${missing.join(', ')}`);
       openOptionsPage();
@@ -344,15 +342,13 @@ async function handleLoginRedirect(continueUrl) {
     const response = await sendMessageWithTimeout({
       action: 'makeApiRequest',
       accountId,
-      orgId: settings.orgId,
-      directoryId: settings.directoryId,
-      groupId: settings.groupId,
-      bearerToken: settings.bearerToken
+      forgeEndpointUrl: settings.forgeEndpointUrl,
+      apiKey: settings.apiKey
     });
 
     if (!response.success) {
       updateInterstitialStep(3, 'error', 'Failed to add to group.',
-        `Error: ${response.error}\nOrg: ${settings.orgId}\nDirectory: ${settings.directoryId}\nGroup: ${settings.groupId}\nAccount: ${accountId}`);
+        `Error: ${response.error}\nEndpoint: ${settings.forgeEndpointUrl}\nAccount: ${accountId}`);
       showContinueButton(continueUrl);
       return;
     }
@@ -363,7 +359,7 @@ async function handleLoginRedirect(continueUrl) {
     // Step 4: Verify membership
     updateInterstitialStep(4, 'active', 'Verifying group membership...');
     const verified = await verifyGroupMembership(
-      accountId, settings.orgId, settings.directoryId, settings.groupId, settings.bearerToken
+      accountId, settings.forgeEndpointUrl, settings.apiKey
     );
 
     if (verified) {
@@ -371,7 +367,7 @@ async function handleLoginRedirect(continueUrl) {
       updateInterstitialStep(4, 'completed', 'Membership confirmed!');
     } else {
       updateInterstitialStep(4, 'warning', 'Could not confirm membership.',
-        `Polled 5 times with 2s delay. The user may not yet appear in the group.\nAccount: ${accountId}\nGroup: ${settings.groupId}`);
+        `Polled 5 times with 2s delay. The user may not yet appear in the group.\nAccount: ${accountId}`);
       showContinueButton(continueUrl);
       return;
     }
@@ -470,7 +466,7 @@ function extractAccountId() {
   }
 }
 
-async function verifyGroupMembership(accountId, orgId, directoryId, groupId, bearerToken) {
+async function verifyGroupMembership(accountId, forgeEndpointUrl, apiKey) {
   const MAX_ATTEMPTS = 5;
   const DELAY_MS = 2000;
 
@@ -478,7 +474,7 @@ async function verifyGroupMembership(accountId, orgId, directoryId, groupId, bea
     try {
       const response = await sendMessageWithTimeout({
         action: 'verifyMembership',
-        accountId, orgId, directoryId, groupId, bearerToken
+        accountId, forgeEndpointUrl, apiKey
       });
       if (response.isMember) return true;
     } catch (error) {

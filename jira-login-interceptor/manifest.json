@@ -1,15 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Group Membership Auto-Joiner",
-  "version": "3.0",
-  "description": "Automatically adds users to a specified group upon Jira login",
+  "version": "4.0",
+  "description": "Automatically adds users to a specified group upon Jira login via Forge backend",
   "permissions": [
     "tabs",
     "storage"
   ],
   "host_permissions": [
-    "https://id.atlassian.com/login/authorize*",
-    "https://api.atlassian.com/*"
+    "https://id.atlassian.com/login/authorize*"
   ],
   "background": {
     "service_worker": "js/service-worker.js"

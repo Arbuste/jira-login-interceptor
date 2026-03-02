@@ -11,12 +11,12 @@ async function checkStatus() {
   const result = await loadSettings();
   const statusDiv = document.getElementById('status');
 
-  if (result.orgId && result.directoryId && result.groupId && result.bearerToken) {
+  if (result.forgeEndpointUrl && result.apiKey) {
     statusDiv.className = 'status active';
-    statusDiv.textContent = '✓ Extension configured and active';
+    statusDiv.textContent = '\u2713 Extension configured and active';
   } else {
     statusDiv.className = 'status inactive';
-    statusDiv.textContent = '✗ Extension not configured. Please set up your group membership settings.';
+    statusDiv.textContent = '\u2717 Extension not configured. Please set up your Forge endpoint and API key.';
   }
 }
 
