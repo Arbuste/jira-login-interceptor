@@ -10,7 +10,9 @@
       "Bash(python3:*)",
       "Bash(node:*)",
       "Bash(FILEPATH=\"$HOME/.claude/projects/C--Users-RomainPIEBOURG-Documents-BIZ-ATLASSIAN-dev-jira-login-interceptor/89369fb5-512d-4db8-b5bd-ae5578dfadeb.jsonl\" && node -e \"\nconst fs = require\\('fs'\\);\nconst path = process.env.FILEPATH;\nconst lines = fs.readFileSync\\(path, 'utf8'\\).split\\('\\\\n'\\);\n\nfor \\(let i = 0; i < lines.length; i++\\) {\n  if \\(!lines[i].trim\\(\\)\\) continue;\n  try {\n    const obj = JSON.parse\\(lines[i]\\);\n    if \\(obj.type === 'assistant' && obj.message && obj.message.content\\) {\n      for \\(const item of obj.message.content\\) {\n        if \\(item.type === 'text' && item.text && item.text.length > 100\\) {\n          console.log\\('=== LINE ' + \\(i+1\\) + ' \\(len=' + item.text.length + '\\) ==='\\);\n          console.log\\(item.text.substring\\(0, 5000\\)\\);\n          if \\(item.text.length > 5000\\) console.log\\('...[truncated]'\\);\n          console.log\\(''\\);\n        }\n      }\n    }\n  } catch\\(e\\) {}\n}\n\" 2>&1)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)"
     ]
   }
 }

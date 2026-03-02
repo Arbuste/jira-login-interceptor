@@ -12,18 +12,19 @@
     "https://api.atlassian.com/*"
   ],
   "background": {
-    "service_worker": "service-worker.js"
+    "service_worker": "js/service-worker.js"
   },
   "content_scripts": [
     {
       "matches": ["https://id.atlassian.com/login/authorize*"],
-      "js": ["navigation-blocker.js"],
+      "js": ["js/navigation-blocker.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
       "matches": ["https://id.atlassian.com/login/authorize*"],
-      "js": ["config-loader.js", "content-script.js"],
+      "css": ["css/interstitial.css"],
+      "js": ["js/config-loader.js", "js/content-script.js"],
       "run_at": "document_start"
     }
   ],
@@ -34,8 +35,8 @@
     }
   ],
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "pages/popup.html",
     "default_title": "Group Membership Auto-Joiner"
   },
-  "options_page": "options.html"
+  "options_page": "pages/options.html"
 }

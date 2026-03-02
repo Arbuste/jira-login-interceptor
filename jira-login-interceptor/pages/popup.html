@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jira Login Interceptor</title>
+    <link rel="stylesheet" href="../css/popup.css">
+</head>
+<body>
+    <h2>Jira Login Interceptor</h2>
+
+    <div class="status" id="status">
+        Loading...
+    </div>
+
+    <button id="configBtn">Configure Settings</button>
+
+    <div class="info">
+        <strong>What this does:</strong><br>
+        &bull; Detects Jira login attempts<br>
+        &bull; Makes API request before redirect<br>
+        &bull; Pauses navigation until response<br>
+        <br>
+        <a href="#" id="openOptions">Open Settings Page</a>
+    </div>
+
+    <script src="../js/config-loader.js"></script>
+    <script src="../js/popup.js"></script>
+</body>
+</html>

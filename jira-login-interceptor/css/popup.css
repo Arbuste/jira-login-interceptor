@@ -1,0 +1,62 @@
+body {
+  width: 300px;
+  padding: 15px;
+  font-family: Arial, sans-serif;
+  background-color: #f5f5f5;
+  margin: 0;
+}
+
+h2 {
+  color: #0052cc;
+  margin-top: 0;
+  font-size: 18px;
+}
+
+.status {
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 15px;
+  font-size: 13px;
+}
+
+.status.active {
+  background-color: #d4f5d4;
+  color: #2d7a2d;
+}
+
+.status.inactive {
+  background-color: #ffe6e6;
+  color: #7a2d2d;
+}
+
+button {
+  background-color: #0052cc;
+  color: white;
+  border: none;
+  padding: 8px 15px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+button:hover {
+  background-color: #003d99;
+}
+
+.info {
+  font-size: 12px;
+  color: #666;
+  margin-top: 10px;
+  line-height: 1.5;
+}
+
+a {
+  color: #0052cc;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}

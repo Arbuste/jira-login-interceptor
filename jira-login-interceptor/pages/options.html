@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jira Login Interceptor - Settings</title>
+    <link rel="stylesheet" href="../css/options.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Jira Login Interceptor</h1>
+        <p class="subtitle">Configure your API credentials</p>
+
+        <div id="statusMessage" class="status-message"></div>
+
+        <div class="info-box">
+            <strong>How to get your credentials:</strong><br>
+            1. Go to <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank">Atlassian API Tokens</a><br>
+            2. Click "Create API token"<br>
+            3. Copy the token and paste it below<br>
+            4. Get your API URL from your Jira instance
+        </div>
+
+        <form id="settingsForm">
+            <div class="form-group">
+                <label for="orgId">Organization ID *</label>
+                <input
+                    type="text"
+                    id="orgId"
+                    placeholder="e.g., a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    required
+                >
+                <div class="help-text">
+                    Your Atlassian organization ID
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="directoryId">Directory ID *</label>
+                <input
+                    type="text"
+                    id="directoryId"
+                    placeholder="e.g., a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    required
+                >
+                <div class="help-text">
+                    The directory ID where the group is located
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="groupId">Group ID *</label>
+                <input
+                    type="text"
+                    id="groupId"
+                    placeholder="e.g., a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    required
+                >
+                <div class="help-text">
+                    The group ID to add the user to on login
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="bearerToken">Bearer Token (API Token) *</label>
+                <input
+                    type="password"
+                    id="bearerToken"
+                    placeholder="Enter your Atlassian API token"
+                    required
+                >
+                <div class="help-text">
+                    Your Atlassian API token for authentication. Get one at: <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank">Atlassian API Tokens</a>
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button type="submit" id="saveBtn">Save Settings</button>
+                <button type="button" id="loadConfigBtn">Load from config.json</button>
+                <button type="button" id="resetBtn">Clear All</button>
+            </div>
+        </form>
+    </div>
+
+    <script src="../js/options.js"></script>
+</body>
+</html>
