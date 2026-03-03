@@ -1,9 +1,7 @@
-# Technical Documentation — Group Membership Auto-Joiner
+# Technical Documentation — Jira Login Interceptor
 
-> Maintained by: Engineering
-> Extension version: 3.0
-> Manifest version: MV3 (Chrome Extensions Manifest V3)
-> Last updated: 2026-02-24
+> Version: 4.0
+> Last updated: 2026-03-02
 
 ---
 
@@ -21,93 +19,106 @@
 10. [Error Handling & Recovery](#10-error-handling--recovery)
 11. [Known Constraints & Limitations](#11-known-constraints--limitations)
 12. [Maintenance Checklist](#12-maintenance-checklist)
-13. [Dependency Map](#13-dependency-map)
-14. [Glossary](#14-glossary)
+13. [Glossary](#13-glossary)
 
 ---
 
 ## 1. Architecture Overview
 
-![[architecture-overview.svg]]
+The system has two main components:
 
-```plantuml
-@startuml Architecture Overview
-skinparam componentStyle rectangle
-
-package "Browser (Chrome / Chromium)" {
-  component "Content Script\n(config-loader.js\n+ content-script.js)" as CS {
-  }
-  note right of CS
-    Runs on: id.atlassian.com/login/authorize
-    - Loads settings (config.json then chrome.storage.local)
-    - Detects login page
-    - Extracts __aid_user_id cookie
-    - Shows interstitial overlay
-    - Blocks navigation
-    - Validates redirect URL
-  end note
-
-  component "Service Worker\n(service-worker.js)" as SW {
-  }
-  note right of SW
-    - POST add-to-group
-    - GET verify-membership
-    - 15s fetch timeout
-  end note
-
-  component "Popup\n(popup.html\nconfig-loader.js\npopup.js)" as Popup
-  component "Options Page\n(options.html\noptions.js)" as Options
-
-  database "config.json\n(admin-provided)" as ConfigJSON
-  database "chrome.storage.local\n(fallback, manual)" as Storage
-
-  note bottom of ConfigJSON
-    Keys: orgId, directoryId, groupId, bearerToken
-  end note
-  note bottom of Storage
-    Keys: orgId, directoryId, groupId, bearerToken
-  end note
-}
-
-cloud "Atlassian Admin API\napi.atlassian.com" as API
-
-CS --> SW : chrome.runtime.sendMessage
-SW --> CS : sendResponse
-SW --> API : fetch()
-CS ..> ConfigJSON : loadSettings() [primary]
-CS ..> Storage : loadSettings() [fallback]
-Popup ..> ConfigJSON : loadSettings() [primary]
-Popup ..> Storage : loadSettings() [fallback]
-Options --> Storage : read / write / delete
-
-@enduml
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Browser (Chrome / Chromium)                                │
+│                                                             │
+│  ┌──────────────────────┐  ┌────────────────────────────┐   │
+│  │  Content Script       │  │  Service Worker             │   │
+│  │  (config-loader.js    │  │  (service-worker.js)        │   │
+│  │   + content-script.js)│  │  - Proxies to Forge         │   │
+│  │  - Intercepts login   │──│    webtrigger               │   │
+│  │  - Shows overlay      │  │  - 15s fetch timeout        │   │
+│  │  - Extracts cookie    │  │                             │   │
+│  └──────────────────────┘  └─────────────┬──────────────┘   │
+│                                           │                  │
+│  ┌──────────────┐  ┌──────────────┐       │                  │
+│  │  Popup       │  │  Options     │       │                  │
+│  │  (popup.js)  │  │  (options.js)│       │                  │
+│  └──────────────┘  └──────────────┘       │                  │
+│                                           │                  │
+│  ┌─────────────────┐ ┌────────────────┐   │                  │
+│  │  config.json     │ │chrome.storage  │   │                  │
+│  │  (bundled)       │ │.local          │   │                  │
+│  │  forgeEndpointUrl│ │forgeEndpointUrl│   │                  │
+│  │  apiKey          │ │apiKey          │   │                  │
+│  └─────────────────┘ └────────────────┘   │                  │
+└───────────────────────────────────────────┼──────────────────┘
+                                            │ HTTPS POST
+                                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Forge App (Atlassian Cloud)                                │
+│                                                             │
+│  ┌──────────────────────┐  ┌────────────────────────────┐   │
+│  │  Webtrigger          │  │  Admin Config UI (React)    │   │
+│  │  (webhookHandler.ts) │  │  - Setup wizard             │   │
+│  │  - addToGroup        │  │  - Searchable dropdowns     │   │
+│  │  - verifyMembership  │  │  - API key management       │   │
+│  └──────────┬───────────┘  └────────────────────────────┘   │
+│             │                                               │
+│  ┌──────────▼───────────┐  ┌────────────────────────────┐   │
+│  │  admin-api.ts        │  │  Forge App Storage          │   │
+│  │  - Atlassian API v2  │  │  - orgId, directoryId       │   │
+│  │  - Cursor pagination │  │  - groupId, adminApiKey     │   │
+│  │  - Add/verify member │  │  - apiKey (shared)          │   │
+│  └──────────┬───────────┘  └────────────────────────────┘   │
+│             │                                               │
+└─────────────┼───────────────────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────┐
+│  Atlassian Admin API v2     │
+│  api.atlassian.com          │
+└─────────────────────────────┘
 ```
 
-The extension follows the standard MV3 pattern:
+### Key Design Decisions
 
-- **Config loader** (`config-loader.js`) provides a shared `loadSettings()` function used by both the content script and the popup. It reads `config.json` first (admin-provided), falling back to `chrome.storage.local` (manual configuration via options page).
-- **Content script** runs in the context of the web page (`id.atlassian.com`). It has access to the DOM and cookies but cannot make cross-origin API calls.
-- **Service worker** runs in the extension's background context. It can make cross-origin `fetch()` calls to `api.atlassian.com` thanks to `host_permissions`.
-- Communication between the two uses `chrome.runtime.sendMessage` / `sendResponse`.
+- **Extension never touches Atlassian API directly** — all API calls go through the Forge webtrigger. This keeps the Atlassian Admin API key server-side only.
+- **Config priority: storage first, config.json fallback** — user-saved settings in `chrome.storage.local` override bundled `config.json` defaults.
+- **Client-side filtering for searchable dropdowns** — all orgs/directories/groups are fetched upfront with pagination, then filtered in the browser. Server-side search was considered but abandoned due to Forge fetch permission constraints.
 
 ---
 
 ## 2. File Inventory
 
-| File | Role | Size | Notes |
-|------|------|------|-------|
-| `manifest.json` | Extension manifest (MV3) | ~35 lines | Defines permissions, content scripts, service worker, web-accessible resources |
-| `config.json` | Admin configuration | ~6 lines | Pre-filled by admin before distributing; empty values trigger fallback to storage |
-| `config-loader.js` | Shared settings loader | ~25 lines | `loadSettings()`: tries config.json, falls back to chrome.storage.local |
-| `content-script.js` | Login detection & UI | ~500 lines | Injected into `id.atlassian.com/login/authorize*` |
-| `service-worker.js` | API proxy | ~140 lines | Handles fetch to Atlassian Admin API |
-| `options.html` | Settings page markup | ~245 lines | Form for orgId, directoryId, groupId, bearerToken |
-| `options.js` | Settings page logic | ~100 lines | Load/save/reset to `chrome.storage.local` (fallback mechanism) |
-| `popup.html` | Toolbar popup markup | ~90 lines | Status indicator + link to settings; loads config-loader.js |
-| `popup.js` | Toolbar popup logic | ~35 lines | Uses `loadSettings()` to display configured/not-configured |
-| `README.md` | User-facing docs | ~100 lines | Installation, usage, troubleshooting |
-| `QUICKSTART.md` | Quick start guide | — | Abbreviated setup guide |
-| `EXAMPLES.md` | Usage examples | — | cURL examples, ID retrieval steps |
+### Chrome Extension (`jira-login-interceptor/`)
+
+| File | Role | Notes |
+|------|------|-------|
+| `manifest.json` | Extension manifest (MV3) | Permissions, content scripts, service worker |
+| `config.json` | Admin-provided config | `{ forgeEndpointUrl, apiKey }` — bundled defaults |
+| `js/config-loader.js` | Shared settings loader | `loadSettings()`: chrome.storage.local first, config.json fallback |
+| `js/content-script.js` | Login detection & UI | Injected into `id.atlassian.com/login/authorize*` |
+| `js/service-worker.js` | Forge proxy | Forwards requests to Forge webtrigger |
+| `js/options.js` | Settings page logic | Save/load, connection test, drag & drop config import |
+| `js/popup.js` | Popup logic | Status indicator using `loadSettings()` |
+| `pages/options.html` | Settings page markup | Drop zone + form for forgeEndpointUrl and apiKey |
+| `pages/popup.html` | Popup markup | Status + link to settings |
+
+### Forge App (`forge-app/`)
+
+| File | Role | Notes |
+|------|------|-------|
+| `manifest.yml` | Forge manifest | Admin page, webtrigger, resolver, permissions |
+| `src/admin-api.ts` | Atlassian Admin API client | `listOrgs`, `listDirectories`, `listGroups`, `addToGroup`, `verifyMembership`, cursor-based `fetchAllPages` |
+| `src/handlers/configResolver.ts` | Resolver functions | `getConfig`/`setConfig`, `listOrgs`/`listDirectories`/`listGroups`, `generateApiKey`/`getApiKey`, `getAdminApiKey`/`setAdminApiKey`, `getWebhookUrl` |
+| `src/handlers/webhookHandler.ts` | Webtrigger handler | Validates API key, routes `addToGroup`/`verifyMembership` |
+| `admin-config/src/ConfigPage.tsx` | Admin UI root | Loads config, manages state, routes wizard vs overview |
+| `admin-config/src/SetupWizard.tsx` | 3-step wizard | Step 0: Group, Step 1: Security, Step 2: Review |
+| `admin-config/src/components/StepGroup.tsx` | Wizard step 1 | Admin API key input + searchable org/directory/group dropdowns |
+| `admin-config/src/components/SearchableSelect.tsx` | Searchable dropdown | Client-side filtering, keyboard nav, click-outside-close |
+| `admin-config/src/utils.ts` | Shared utilities | `resolveDisplayName(list, id)` |
+| `admin-config/src/types.ts` | TypeScript types | `AdminResource`, `AppConfig`, etc. |
+| `admin-config/src/styles.css` | Admin UI styles | Searchable select, spinner, wizard, overview |
 
 ---
 
@@ -116,109 +127,72 @@ The extension follows the standard MV3 pattern:
 ### 3.1 Extension Load
 
 1. Chrome loads `manifest.json`.
-2. Service worker (`service-worker.js`) is registered and starts.
-3. Content script injection rule is registered: inject `config-loader.js` then `content-script.js` on any URL matching `https://id.atlassian.com/login/authorize*` at `document_start`.
+2. Service worker (`service-worker.js`) is registered.
+3. Content script injection rule: inject `config-loader.js` then `content-script.js` on `https://id.atlassian.com/login/authorize*` at `document_start`.
 
 ### 3.2 Login Interception (Happy Path)
 
-![[login-interception-happy.svg]]
-```plantuml
-@startuml Login Interception - Happy Path
-skinparam sequenceMessageAlign center
+```
+User logs in to Jira
+  → Browser redirects to id.atlassian.com/login/authorize?continue=...
+  → Content script injected at document_start
 
-actor User
-participant "Browser" as Browser
-participant "content-script.js" as CS
-participant "config-loader.js" as CL
-participant "service-worker.js" as SW
-participant "Atlassian Admin API" as API
+1. checkAndHandleLoginPage()
+   - navigationBlocked = true
+   - setTimeout(100ms) to wait for cookies
 
-User -> Browser : Logs in to Jira
-Browser -> CS : Injects at **document_start**\n//id.atlassian.com/login/authorize?continue=...//
+2. handleLoginRedirect(continueUrl)
+   - loginInProgress = true
+   - loadSettings() → { forgeEndpointUrl, apiKey }
 
-activate CS
-CS -> CS : checkAndHandleLoginPage()
-CS -> CS : navigationBlocked = true
-CS -> CS : setTimeout(100ms) — wait for cookies
+3. Pre-check: is user already a member?
+   - sendMessage({ action: 'verifyMembership', accountId })
+   - If yes → skip overlay, redirect immediately
 
-... 100ms ...
+4. createInterstitialOverlay() — 5 steps:
+   Step 1: Login detected ✓
+   Step 2: Extract __aid_user_id cookie ✓
+   Step 3: Add to group (POST to Forge webtrigger) ✓
+   Step 4: Verify membership (poll up to 5x, 2s apart) ✓
+   Step 5: Redirect to continueUrl ✓
 
-CS -> CS : handleLoginRedirect(continueUrl)
-CS -> CS : loginInProgress = true
-CS -> CS : createInterstitialOverlay()
-
-== Step 1: Load Settings ==
-
-CS -> CL : loadSettings()
-activate CL
-CL -> CL : fetch(config.json)
-alt config.json has all 4 values
-  CL --> CS : config object
-else config.json empty/missing/corrupt
-  CL -> CL : chrome.storage.local.get(...)
-  CL --> CS : storage object
-end
-deactivate CL
-
-alt Settings incomplete
-  CS -> CS : error overlay → open options page
-  CS -> Browser : redirect after 2s
-else Settings OK
-end
-
-== Step 2: Extract Account ID ==
-
-CS -> CS : extractAccountId()
-CS -> CS : Read __aid_user_id cookie
-
-== Step 3: Add to Group ==
-
-CS -> SW : sendMessage({ action: 'makeApiRequest', ... })
-activate SW
-SW -> API : POST /admin/v2/orgs/.../groups/.../memberships
-activate API
-API --> SW : 201 Created
-deactivate API
-SW --> CS : { success: true }
-deactivate SW
-
-== Step 4: Verify Membership ==
-
-loop up to 5 attempts, 2s apart
-  CS -> SW : sendMessage({ action: 'verifyMembership', ... })
-  activate SW
-  SW -> API : GET /admin/v2/orgs/.../directories/.../users?groupIds=...
-  activate API
-  API --> SW : { data: [...] }
-  deactivate API
-  SW --> CS : { isMember: true/false }
-  deactivate SW
-end
-
-== Step 5: Redirect ==
-
-CS -> CS : navigateTo(continueUrl)\nURL validation: https + *.atlassian.com|net
-CS -> CS : navigationBlocked = false
-CS -> CS : loginInProgress = false
-CS -> Browser : window.location.href = continueUrl
-deactivate CS
-
-Browser -> User : Jira / Confluence loads
-
-@enduml
+5. navigateTo(continueUrl) — validated against allowlist
 ```
 
-### 3.3 Service Worker Lifecycle (MV3)
+### 3.3 Service Worker Message Flow
 
-The service worker is **event-driven** and may be terminated by Chrome after ~30 seconds of inactivity. It wakes on `chrome.runtime.onMessage`. This is why:
-- The content script has a 20-second message timeout (`sendMessageWithTimeout`).
-- All fetch calls have a 15-second `AbortController` timeout.
+```
+content-script.js
+  → chrome.runtime.sendMessage({ action, accountId, ... })
+  → service-worker.js receives message
+  → Loads settings (forgeEndpointUrl, apiKey)
+  → fetch(forgeEndpointUrl, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer <apiKey>', Content-Type: 'application/json' },
+      body: { action: 'addToGroup'|'verifyMembership', accountId }
+    })
+  → Returns response to content script
+```
 
-### 3.4 Page Unload Prevention
+### 3.4 Forge Webtrigger Flow
+
+```
+Extension → POST webtrigger URL
+  → webhookHandler.ts validates API key
+  → Routes action to admin-api.ts
+  → admin-api.ts calls Atlassian Admin API v2 using stored config + admin API key
+  → Returns result to extension
+```
+
+### 3.5 Service Worker Lifecycle (MV3)
+
+The service worker is event-driven and may be terminated by Chrome after ~30s of inactivity. It wakes on `chrome.runtime.onMessage`. The content script uses a 20-second message timeout (`sendMessageWithTimeout`). All fetch calls have a 15-second `AbortController` timeout.
+
+### 3.6 Page Unload Prevention
 
 While `navigationBlocked === true`:
-- `beforeunload` event handler calls `event.preventDefault()` and sets `event.returnValue`.
-- Click handler on `document` (capture phase) intercepts all `<a>` clicks and calls `event.preventDefault()`.
+- `beforeunload` handler calls `event.preventDefault()` and sets `event.returnValue`.
+- Click handler on `document` (capture phase) intercepts all `<a>` clicks.
 
 ---
 
@@ -230,302 +204,226 @@ While `navigationBlocked === true`:
 
 | Variable | Type | Purpose |
 |----------|------|---------|
-| `navigationBlocked` | `boolean` | When `true`, `beforeunload` and link clicks are blocked |
-| `overlayElement` | `HTMLElement\|null` | Reference to the interstitial overlay DOM node |
-| `loginInProgress` | `boolean` | Concurrent execution guard for `handleLoginRedirect` |
-| `STEPS` | `Array<{label}>` | 5-step definitions for the overlay UI |
+| `navigationBlocked` | `boolean` | Blocks `beforeunload` and link clicks |
+| `overlayElement` | `HTMLElement\|null` | Reference to interstitial overlay |
+| `loginInProgress` | `boolean` | Concurrent execution guard |
+| `STEPS` | `Array<{label}>` | 5-step definitions for the overlay |
 
 #### Key Functions
 
 | Function | Purpose |
 |----------|---------|
-| `checkAndHandleLoginPage()` | Entry point. Parses URL, validates it's a login page, starts flow. |
+| `checkAndHandleLoginPage()` | Entry point. Parses URL, validates login page, starts flow. |
 | `handleLoginRedirect(continueUrl)` | Orchestrates the 5-step process. Guarded by `loginInProgress`. |
-| `sendMessageWithTimeout(message, timeoutMs)` | Wraps `chrome.runtime.sendMessage` with a Promise + timeout. Default 20s. |
-| `createInterstitialOverlay()` | Builds and injects the full-screen overlay. Idempotent (returns existing if present). |
-| `updateInterstitialStep(stepNumber, status, message)` | Updates a step's icon, color, and progress bar. Statuses: `active`, `completed`, `warning`, `error`. |
-| `extractAccountId()` | Reads `__aid_user_id` from `document.cookie`. Returns `string\|null`. |
-| `verifyGroupMembership(...)` | Polls the service worker up to 5 times with 2s intervals. Returns `boolean`. |
-| `navigateTo(url)` | **Validates URL** against allowlist (`*.atlassian.com`, `*.atlassian.net`, HTTPS only) then sets `window.location.href`. |
-| `allowNavigation(continueUrl)` | Thin wrapper around `navigateTo`. |
-| `openOptionsPage()` | Opens extension options via `chrome.runtime.openOptionsPage()` with fallback to `chrome.tabs.create`. |
+| `sendMessageWithTimeout(message, timeoutMs)` | Wraps `chrome.runtime.sendMessage` with Promise + timeout (20s default). |
+| `createInterstitialOverlay()` | Builds/injects fullscreen overlay. Idempotent. |
+| `updateInterstitialStep(stepNumber, status, message)` | Updates step icon, color, progress bar. |
+| `extractAccountId()` | Reads `__aid_user_id` from `document.cookie`. |
+| `verifyGroupMembership(...)` | Polls service worker up to 5 times, 2s apart. |
+| `navigateTo(url)` | Validates URL (HTTPS + `*.atlassian.com\|net`), then redirects. |
 
 ### 4.2 service-worker.js
 
-#### Message Handler
+Listens for messages via `chrome.runtime.onMessage`:
 
-Listens for two actions via `chrome.runtime.onMessage`:
+| Action | HTTP | Forge Endpoint Body |
+|--------|------|---------------------|
+| `makeApiRequest` | POST | `{ action: 'addToGroup', accountId }` |
+| `verifyMembership` | POST | `{ action: 'verifyMembership', accountId }` |
 
-| Action | Handler | HTTP Method | Endpoint |
-|--------|---------|-------------|----------|
-| `makeApiRequest` | `makeApiRequest()` | `POST` | `/admin/v2/orgs/{orgId}/directories/{directoryId}/groups/{groupId}/memberships` |
-| `verifyMembership` | `checkGroupMembership()` | `GET` | `/admin/v2/orgs/{orgId}/directories/{directoryId}/users?groupIds=...&accountIds=...&limit=1` |
-
-Both handlers return `true` from `onMessage.addListener` to keep the `sendResponse` channel open for async responses.
-
-#### Fetch Timeout Pattern
-
-Both functions use the same pattern:
+Both use `AbortController` with 15-second timeout:
 ```js
 const controller = new AbortController();
 const timeoutId = setTimeout(() => controller.abort(), 15000);
-const response = await fetch(url, { ..., signal: controller.signal });
+const response = await fetch(forgeEndpointUrl, { ..., signal: controller.signal });
 clearTimeout(timeoutId);
 ```
 
-If the timeout fires, `controller.abort()` causes `fetch` to throw an `AbortError`.
+### 4.3 config-loader.js
 
-### 4.3 options.js
+Single async function `loadSettings()`:
 
-- **Load**: On `DOMContentLoaded`, reads 4 keys from `chrome.storage.local`.
-- **Save**: On form submit, validates all fields are non-empty, validates `orgId`, `directoryId`, and `groupId` are UUIDs (`/^[a-z0-9]{8}-...-[a-z0-9]{12}$/i`), then writes to `chrome.storage.local`.
-- **Reset**: Confirms with `window.confirm()`, then removes all 4 keys.
+1. `chrome.storage.local.get(['forgeEndpointUrl', 'apiKey'])` — if both present, return.
+2. `fetch(chrome.runtime.getURL('config.json'))` — parse, if both keys present, return.
+3. Otherwise return `{}` (not configured).
 
-### 4.4 config-loader.js
+### 4.4 options.js
 
-Exposes a single async function `loadSettings()` used by both the content script and the popup:
-
-1. Fetches `config.json` via `chrome.runtime.getURL()`.
-2. If the file exists, parses it, and all 4 keys are non-empty → returns the config object.
-3. Otherwise (file missing, invalid JSON, or any empty value) → falls back to `chrome.storage.local.get()`.
+- **Load**: On `DOMContentLoaded`, reads from chrome.storage.local, then falls back to config.json.
+- **Save**: Validates forgeEndpointUrl (must be HTTPS, valid URL) and apiKey (non-empty). Writes to chrome.storage.local.
+- **Test Connection**: Two-step check:
+  1. Endpoint reachability (POST without auth — any response including 401 means reachable)
+  2. API key validation (POST with `Authorization: Bearer <key>` — 401 = bad key, 200 = good)
+- **Drop Zone**: Accepts `.json` files. Validates JSON structure, HTTPS URL, required fields. Populates form fields.
+- **Reset**: Confirms, then removes both keys from chrome.storage.local.
 
 ### 4.5 popup.js
 
-- On `DOMContentLoaded`, calls `loadSettings()` (from `config-loader.js`).
-- If all 4 settings are present (from either config.json or storage), shows green "configured" status.
-- If any missing, shows red "not configured" status.
-- "Configure Settings" button opens `chrome.runtime.openOptionsPage()`.
+Calls `loadSettings()`. If both `forgeEndpointUrl` and `apiKey` are present → green "configured". Otherwise → red "not configured". Button opens options page.
+
+### 4.6 Forge Admin Config UI
+
+**ConfigPage.tsx** — Single source of truth for all state:
+- Loads existing config on mount (orgId, directoryId, groupId, hasAdminApiKey, apiKey)
+- Cascading data loading: admin API key → orgs → directories → groups
+- Loading states: `loadingOrgs`, `loadingDirectories`, `loadingGroups`
+- Passes everything to SetupWizard → StepGroup as props
+
+**SearchableSelect.tsx** — Reusable searchable dropdown:
+- Text input + filtered dropdown list
+- Client-side filtering by item name
+- Keyboard navigation (ArrowUp/Down, Enter, Escape)
+- Click-outside-to-close (document mousedown listener)
+- `onMouseDown` with `e.preventDefault()` on items to prevent blur before selection registers
+
+**StepGroup.tsx** — Wizard step 1:
+- Admin API key input with step-by-step creation instructions
+- Three `SearchableSelect` components for org/directory/group
+- Receives all data and loading states as props (no internal fetching)
 
 ---
 
 ## 5. Message Protocol
 
-
-![[message-protocol 1.svg]]
-
-
-```plantuml
-@startuml Message Protocol
-skinparam sequenceMessageAlign center
-
-participant "content-script.js" as CS
-participant "service-worker.js" as SW
-participant "Atlassian Admin API" as API
-
-== makeApiRequest ==
-
-CS -> SW : { action: "makeApiRequest",\n  accountId, orgId, directoryId,\n  groupId, bearerToken }
-activate SW
-SW -> API : POST /admin/v2/orgs/{orgId}/directories/{directoryId}\n  /groups/{groupId}/memberships\n  Body: { accountId }
-activate API
-API --> SW : 201 Created
-deactivate API
-SW --> CS : { success: true, data: { status: 201 } }
-deactivate SW
-
-== verifyMembership ==
-
-CS -> SW : { action: "verifyMembership",\n  accountId, orgId, directoryId,\n  groupId, bearerToken }
-activate SW
-SW -> API : GET /admin/v2/orgs/{orgId}/directories/{directoryId}\n  /users?groupIds={groupId}&accountIds={accountId}&limit=1
-activate API
-API --> SW : { data: [ ... ] }
-deactivate API
-SW --> CS : { isMember: true }
-deactivate SW
-@enduml
-```
-
 ### content-script.js → service-worker.js
+
+Both message types are forwarded to the Forge webtrigger as POST requests.
 
 #### `makeApiRequest`
 
-**Request:**
+**Content script sends:**
 ```json
-{
-  "action": "makeApiRequest",
-  "accountId": "5f7c...user-id",
-  "orgId": "uuid",
-  "directoryId": "uuid",
-  "groupId": "uuid",
-  "bearerToken": "token-string"
-}
+{ "action": "makeApiRequest", "accountId": "5f7c..." }
 ```
 
-**Response (success):**
-```json
-{
-  "success": true,
-  "data": { "status": 201, "statusText": "Created" }
-}
+**Service worker calls Forge:**
+```
+POST <forgeEndpointUrl>
+Authorization: Bearer <apiKey>
+Content-Type: application/json
+{ "action": "addToGroup", "accountId": "5f7c..." }
 ```
 
-**Response (failure):**
-```json
-{
-  "success": false,
-  "error": "API request failed with status 403: Forbidden. Response: ..."
-}
-```
+**Response (success):** `{ "success": true }`
+**Response (failure):** `{ "success": false, "error": "..." }`
 
 #### `verifyMembership`
 
-**Request:**
+**Content script sends:**
 ```json
-{
-  "action": "verifyMembership",
-  "accountId": "5f7c...user-id",
-  "orgId": "uuid",
-  "directoryId": "uuid",
-  "groupId": "uuid",
-  "bearerToken": "token-string"
-}
+{ "action": "verifyMembership", "accountId": "5f7c..." }
 ```
 
-**Response (member):**
-```json
-{ "isMember": true }
+**Service worker calls Forge:**
+```
+POST <forgeEndpointUrl>
+Authorization: Bearer <apiKey>
+Content-Type: application/json
+{ "action": "verifyMembership", "accountId": "5f7c..." }
 ```
 
-**Response (not member / error):**
-```json
-{ "isMember": false, "error": "..." }
-```
+**Response:** `{ "isMember": true }` or `{ "isMember": false }`
 
 ---
 
 ## 6. Security Model
 
-### 6.1 Open Redirect Protection
+### 6.1 API Key Separation
+
+- **Atlassian Admin API key** — stored only in Forge app storage. Never exposed to the Chrome extension or end users.
+- **Shared API key** — generated by the Forge app, stored in both Forge storage (for validation) and the Chrome extension (for authentication). This is the only secret the extension handles.
+
+### 6.2 Open Redirect Protection
 
 `navigateTo(url)` validates:
-1. `parsed.protocol === 'https:'` — no `http:`, `javascript:`, `data:`, etc.
-2. `parsed.hostname` ends with `.atlassian.com` or `.atlassian.net` — blocks phishing redirects.
+1. `parsed.protocol === 'https:'`
+2. `parsed.hostname` ends with `.atlassian.com` or `.atlassian.net`
 
-If either check fails, the redirect is blocked and an error is logged.
+### 6.3 Token Storage
 
-### 6.2 Token Storage
+Extension settings stored in `chrome.storage.local` (on-device only, not synced).
 
-Tokens are stored in `chrome.storage.local` (on-device only). Unlike `chrome.storage.sync`, this does **not** sync through Google servers.
-
-**Implication:** If a user switches devices, they must re-enter their settings.
-
-### 6.3 Host Permissions (Principle of Least Privilege)
+### 6.4 Host Permissions (Least Privilege)
 
 ```json
 "host_permissions": [
-  "https://id.atlassian.com/login/authorize*",
-  "https://api.atlassian.com/*"
+  "https://id.atlassian.com/login/authorize*"
 ]
 ```
 
-- `id.atlassian.com/login/authorize*`: Required for content script injection.
-- `api.atlassian.com/*`: Required for service worker API calls.
-- No wildcard Atlassian permissions (e.g., `*.atlassian.net` was removed).
-
-### 6.4 Logging Hygiene
-
-- `console.log` calls that exposed account IDs, cookie values, or full API URLs have been removed.
-- Only `console.error`, `console.warn`, and non-sensitive status logs remain.
-- The initialization log (`'Jira Login Interceptor content script loaded'`) is kept for debugging.
+The Forge webtrigger URL is dynamically fetched from settings, not hardcoded in permissions.
 
 ### 6.5 Input Validation
 
-- `orgId`, `directoryId`, `groupId` are validated as UUIDs on the options page.
-- `bearerToken` is validated as non-empty (no format constraint — Atlassian tokens vary).
-- `continueUrl` is validated by `navigateTo()` before redirect.
+- `forgeEndpointUrl` validated as a valid HTTPS URL on save
+- `apiKey` validated as non-empty
+- JSON files dropped on the drop zone are validated for structure and HTTPS URL
+- `continueUrl` validated by `navigateTo()` before redirect
+
+### 6.6 Logging Hygiene
+
+No account IDs, tokens, or full API URLs are logged. Only generic status messages and errors.
 
 ---
 
 ## 7. Timeouts & Retry Strategy
 
-| Layer | Timeout | Mechanism | Consequence on Timeout |
-|-------|---------|-----------|----------------------|
-| Service worker fetch | 15 seconds | `AbortController` | Throws `AbortError`, caught by service worker, returned as error response |
-| Content script → service worker message | 20 seconds | `setTimeout` + `Promise.reject` | Caught in `handleLoginRedirect` catch block, error overlay shown, redirects after 3s |
-| Membership verification polling | 5 attempts x 2s delay = ~10s total + 5x message timeout worst case | Loop with `sendMessageWithTimeout` | Returns `false` after all attempts exhausted, shows amber warning, still redirects |
-| Cookie extraction delay | 100ms | `setTimeout` before `handleLoginRedirect` | Ensures `__aid_user_id` cookie is available after page load |
+| Layer | Timeout | Mechanism | On Timeout |
+|-------|---------|-----------|------------|
+| Service worker fetch | 15s | `AbortController` | Throws `AbortError`, returned as error |
+| Content script → service worker | 20s | `setTimeout` + `Promise.reject` | Error overlay, redirects after 3s |
+| Membership verification | 5 attempts x 2s | Loop with `sendMessageWithTimeout` | Amber warning, still redirects |
+| Cookie extraction delay | 100ms | `setTimeout` | Ensures cookie is set |
+| Manual continue button | 30s countdown | Button appears in overlay | User can click to proceed |
 
 ### Worst-Case Timeline
 
-If Atlassian API is completely down:
+If Forge endpoint is completely down:
 1. 100ms cookie delay
 2. Step 3 (add to group): 20s message timeout → error → 3s delay → redirect
 
-**Total worst case: ~23 seconds** before the user is redirected.
-
-If API succeeds but membership verification times out:
-1. 100ms + Steps 1-3 (~2-3s) + Step 4 (5 attempts x (20s timeout + 2s delay)) = ~113s
-
-**Mitigation**: In practice, the fetch timeout (15s) fires before the message timeout (20s), so each verification attempt costs at most ~17s in the failure case. With 5 attempts: ~85s. Consider reducing `MAX_ATTEMPTS` or `DELAY_MS` if this is too long.
+**Total worst case: ~23 seconds** before redirect.
 
 ---
 
 ## 8. Storage Schema
 
-### Configuration Priority
+### Chrome Extension
 
-Settings are resolved in this order by `loadSettings()` (in `config-loader.js`):
+**chrome.storage.local** (primary):
 
-1. **`config.json`** (bundled with the extension, pre-filled by the admin). If all 4 values are non-empty, these are used.
-2. **`chrome.storage.local`** (manual fallback via options page). Used if `config.json` is missing, corrupt, or has any empty value.
-3. If neither source has complete settings, the extension treats itself as "not configured" and opens the options page.
+| Key | Type | Example |
+|-----|------|---------|
+| `forgeEndpointUrl` | string (HTTPS URL) | `https://...atlassian.net/x1/...` |
+| `apiKey` | string | `abc123...` |
 
-![[config-load-flow.svg]]
-
-
-```plantuml
-@startuml Config Loading Flow
-start
-:fetch(config.json) via chrome.runtime.getURL;
-if (fetch succeeds?) then (yes)
-  :Parse JSON;
-  if (all 4 values non-empty?) then (yes)
-    :Return config.json values;
-    stop
-  else (no)
-    :Fall through;
-  endif
-else (no — missing, corrupt, network error)
-  :Caught by try/catch;
-endif
-:chrome.storage.local.get(...);
-:Return storage values;
-note right
-  May have empty values —
-  caller checks completeness
-end note
-stop
-@enduml
-```
-
-### config.json
-
-Shipped with the extension. The admin fills all 4 values before distributing. Located at the extension root.
+**config.json** (fallback):
 
 ```json
 {
-  "orgId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "directoryId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "groupId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "bearerToken": "ATATT3x..."
+  "forgeEndpointUrl": "https://your-forge-webtrigger-url",
+  "apiKey": "your-shared-api-key"
 }
 ```
 
-If any value is an empty string, the entire file is skipped and `chrome.storage.local` is tried instead.
+### Forge App Storage
 
-### chrome.storage.local (fallback)
+| Key | Value |
+|-----|-------|
+| `orgId` | Organization UUID |
+| `directoryId` | Directory UUID |
+| `groupId` | Group UUID |
+| `adminApiKey` | Atlassian Admin API key (encrypted via `forge variables`) |
+| `apiKey` | Shared API key (for extension auth) |
 
-| Key | Type | Example | Validated |
-|-----|------|---------|-----------|
-| `orgId` | UUID string | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` | UUID regex in options.js |
-| `directoryId` | UUID string | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` | UUID regex in options.js |
-| `groupId` | UUID string | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` | UUID regex in options.js |
-| `bearerToken` | string | `ATATT3x...` | Non-empty check only |
+### Configuration Priority
 
-### Migration Note
-
-Version 2.0 used `chrome.storage.sync`. Version 3.0 uses `chrome.storage.local`. There is **no automatic migration**. Users upgrading from v2 must re-enter their settings on the options page.
+```
+loadSettings()
+  ├── chrome.storage.local has both keys? → use it
+  ├── config.json has both keys? → use it
+  └── neither? → return {} (not configured)
+```
 
 ---
 
@@ -533,252 +431,113 @@ Version 2.0 used `chrome.storage.sync`. Version 3.0 uses `chrome.storage.local`.
 
 ### DOM Structure
 
-![[interstitial-dom.svg]]
-
-
-```plantuml
-@startwbs Interstitial Overlay DOM
-* #jli-interstitial\n(fixed fullscreen, z-index: 999999)
-** card (centered container)
-*** h2 "Setting up your access"
-*** p "Please wait while we configure..."
-*** #jli-steps
-**** #jli-step-1 → .jli-step-icon + .jli-step-label
-**** #jli-step-2
-**** #jli-step-3
-**** #jli-step-4
-**** #jli-step-5
-*** progress track
-**** #jli-progress (animated width bar)
-*** #jli-status (status message text)
-@endwbs
+```
+#jli-interstitial (fixed fullscreen, z-index: 999999)
+  └── card (centered container)
+      ├── h2 "Setting up your access"
+      ├── p "Please wait while we configure..."
+      ├── #jli-steps
+      │   ├── #jli-step-1 → .jli-step-icon + .jli-step-label
+      │   ├── #jli-step-2
+      │   ├── #jli-step-3
+      │   ├── #jli-step-4
+      │   └── #jli-step-5
+      ├── progress track
+      │   └── #jli-progress (animated width bar)
+      ├── #jli-status (status message text)
+      └── continue button (appears after 30s countdown)
 ```
 
 ### Step Statuses
 
-| Status | Icon | Icon BG | Label Color | Progress Bar |
-|--------|------|---------|-------------|-------------|
-| `pending` (default) | Number | `#21262d` | `#484f58` | No change |
-| `active` | Spinning SVG circle | `#1f6feb` | `#e6edf3` | Advances to `stepNumber / 5 * 100%` |
-| `completed` | Checkmark SVG | `#238636` | `#7ee787` | Advances to `stepNumber / 5 * 100%` |
-| `warning` | Exclamation SVG | `#9e6a03` | `#d29922` | Advances to `stepNumber / 5 * 100%` (stays green) |
-| `error` | X SVG | `#da3633` | `#f85149` | Stays at `(stepNumber - 1) / 5 * 100%`, turns red |
-
-### CSS Animation
-
-A `@keyframes jli-spin` rule is injected once into `<head>` when the first `active` status is set. ID: `#jli-keyframes`.
+| Status | Icon | Icon BG | Progress Bar |
+|--------|------|---------|-------------|
+| `pending` | Number | `#21262d` | No change |
+| `active` | Spinning SVG | `#1f6feb` | Advances |
+| `completed` | Checkmark SVG | `#238636` | Advances |
+| `warning` | Exclamation SVG | `#9e6a03` | Stays green |
+| `error` | X SVG | `#da3633` | Turns red |
 
 ---
 
 ## 10. Error Handling & Recovery
 
-### Error Categories
+| Error | Step | Recovery |
+|-------|------|----------|
+| Extension not configured | 1 | Options page opens, redirects after 2s |
+| Cookie not found | 2 | Error overlay, redirects after 3s |
+| Forge endpoint unreachable | 3 | Error overlay, redirects after 3s |
+| API key invalid (401) | 3 | Error overlay, user reconfigures |
+| Forge app not configured (500) | 3 | Error overlay, admin completes wizard |
+| Verification fails 5x | 4 | Amber warning, still redirects |
+| Untrusted redirect URL | 5 | Redirect silently blocked |
+| Any unexpected exception | Active step | Step turns red, redirects after 3s |
 
-| Error | Step | User Impact | Recovery |
-|-------|------|-------------|----------|
-| Extension not configured | 1 | Options page opens automatically | User enters settings, refreshes page |
-| Cookie not found | 2 | Overlay shows error | Auto-redirects after 3s |
-| API 401/403 | 3 | "Failed to add to group" | Token expired; user reconfigures in options |
-| API 404 | 3 | "Failed to add to group" | Wrong org/directory/group ID |
-| API timeout (15s) | 3 | "Failed to add to group" | Transient; retry by refreshing page |
-| Service worker unresponsive (20s) | 3 or 4 | "Service worker did not respond" | Service worker crashed; Chrome will restart it |
-| Verification fails after 5 attempts | 4 | Amber warning, still redirects | Eventual consistency; membership may appear later |
-| Untrusted redirect URL | 5 | Redirect silently blocked | User sees nothing; check console for error |
-| Unexpected exception | Any active step | Current step turns red | Auto-redirects after 3s |
-
-### Error Flow — Sequence Diagram
-
-![[error-flow.svg]]
-
-```plantuml
-@startuml Error Flow - API Failure at Step 3
-skinparam sequenceMessageAlign center
-
-participant "content-script.js" as CS
-participant "service-worker.js" as SW
-participant "Atlassian Admin API" as API
-
-CS -> CS : Step 1 completed (settings loaded)
-CS -> CS : Step 2 completed (account ID extracted)
-
-== Step 3: Add to Group — FAILS ==
-
-CS -> SW : sendMessage({ action: 'makeApiRequest', ... })
-activate SW
-SW -> API : POST .../memberships
-activate API
-API --> SW : 403 Forbidden
-deactivate API
-SW --> CS : { success: false, error: "403 Forbidden" }
-deactivate SW
-
-CS -> CS : updateInterstitialStep(3, 'error')\n"Failed to add to group: 403..."
-CS -> CS : Progress bar turns **red** at 40%
-
-... 3 seconds ...
-
-CS -> CS : navigationBlocked = false
-CS -> CS : navigateTo(continueUrl)
-
-note over CS
-  Steps 4-5 are skipped.
-  User lands on Jira without
-  group membership.
-end note
-@enduml
-```
-
-### Catch-All Handler
-
-In `handleLoginRedirect`, the outer `catch` block:
-1. Finds the currently-active step (by looking for the spinning SVG).
-2. Marks it as `error`.
-3. Waits 3 seconds.
-4. Unblocks navigation and redirects.
-
-The `finally` block always resets `loginInProgress = false`.
+The outer `catch` block in `handleLoginRedirect` finds the currently-active step, marks it as `error`, waits 3s, then unblocks navigation and redirects. The `finally` block always resets `loginInProgress = false`.
 
 ---
 
 ## 11. Known Constraints & Limitations
 
-1. **Single group only**: The extension adds the user to exactly one group. Multi-group support would require an array of `groupId` values and looping the API call.
-
-2. **Cookie dependency**: `__aid_user_id` must be set by Atlassian's login flow. Non-standard SSO providers (e.g., custom SAML IdPs that redirect differently) may not set this cookie on `id.atlassian.com`.
-
-3. **No migration from v2 sync storage**: Users upgrading from v2 lose their saved settings.
-
-4. **MV3 service worker lifecycle**: Chrome may terminate the service worker at any time. The 20-second message timeout handles this, but rapid back-to-back logins could hit edge cases.
-
-5. **No offline support**: The extension requires network access to `api.atlassian.com`. If the network is down, step 3 will fail and the user is redirected without group membership.
-
-6. **Verification polling duration**: With 5 attempts and 2s intervals, verification can take up to ~10s in the success case. If the API is slow, up to ~85s worst case (see Section 7).
-
-7. **Browser support**: Chrome/Chromium only. Firefox uses a different extension API surface (MV2 with `browser.*`).
+1. **Single group only**: One group per installation. Multi-group would require array support.
+2. **Cookie dependency**: `__aid_user_id` must be set by Atlassian's login flow. Non-standard SSO may not set it.
+3. **MV3 service worker lifecycle**: May be terminated at any time. The 20s message timeout handles this.
+4. **No offline support**: Requires network access to the Forge endpoint.
+5. **Verification polling**: Up to ~10s in the success case (5 attempts x 2s).
+6. **Browser support**: Chrome/Chromium only.
+7. **Client-side filtering only**: Searchable dropdowns fetch all items and filter locally. Very large orgs (1000+ groups) may experience slower initial load.
+8. **Forge fetch permissions**: The Forge app can only fetch from `https://api.atlassian.com`. Adding query params to paginated URLs must stay within this domain.
 
 ---
 
 ## 12. Maintenance Checklist
 
-### When Updating the Atlassian Admin API
+### When Updating the Forge App
 
-- [ ] Check if the API endpoint paths have changed (`/admin/v2/orgs/.../groups/.../memberships`).
-- [ ] Check if the response format for `checkGroupMembership` has changed (expects `{ data: [...] }`).
-- [ ] Check if new authentication schemes are required (currently: Bearer token).
-- [ ] Update `service-worker.js` functions accordingly.
+- [ ] Check Atlassian Admin API endpoint changes
+- [ ] Verify `manifest.yml` permissions cover any new endpoints
+- [ ] Run `npx tsc --noEmit` for type checking
+- [ ] Run `npx vite build` for frontend build
+- [ ] `forge deploy` and test
 
-### When Updating Permissions
+### When Changing Extension Storage Keys
 
-- [ ] Edit `manifest.json` `host_permissions` and `permissions`.
-- [ ] Update the "Permissions Explained" section in `README.md`.
-- [ ] If adding new domains, consider whether `navigateTo()` allowlist needs updating.
-
-### When Changing Storage Keys
-
-- [ ] Update `config.json` (add/remove keys).
-- [ ] Update `config-loader.js` (`loadSettings` — both config.json read and chrome.storage.local fallback).
-- [ ] Update `options.js` (load, save, reset).
-- [ ] Update `popup.js` (status check).
-- [ ] Update `content-script.js` (`handleLoginRedirect` settings read).
-- [ ] Update this document's Storage Schema section.
+- [ ] Update `config.json` schema
+- [ ] Update `config-loader.js` (both paths)
+- [ ] Update `options.js` (load, save, reset, drop zone validation)
+- [ ] Update `popup.js` (status check)
+- [ ] Update `content-script.js` and `service-worker.js`
+- [ ] Update this document
 
 ### When Modifying the Interstitial
 
-- [ ] `STEPS` array in `content-script.js` defines step count and labels.
-- [ ] `updateInterstitialStep()` handles the visual states.
-- [ ] Progress bar percentage is calculated as `stepNumber / STEPS.length`.
-- [ ] If adding/removing steps, update all `updateInterstitialStep(N, ...)` calls in `handleLoginRedirect`.
+- [ ] `STEPS` array in `content-script.js` defines step count and labels
+- [ ] `updateInterstitialStep()` handles visual states
+- [ ] Progress bar percentage = `stepNumber / STEPS.length`
+- [ ] Update all `updateInterstitialStep(N, ...)` calls
 
 ### Before Each Release
 
-- [ ] Bump `version` in `manifest.json`.
-- [ ] Update `README.md` version footer.
-- [ ] Verify no `console.log` calls leak sensitive data (account IDs, tokens, API URLs).
-- [ ] Test all nominal and edge cases from `TEST-PLAN.md`.
-- [ ] Load unpacked in Chrome and walk through a real login.
+- [ ] Bump `version` in `manifest.json`
+- [ ] Verify no `console.log` calls leak sensitive data
+- [ ] Test all cases from `TEST-PLAN.md`
+- [ ] Load unpacked in Chrome and walk through a real login
 
 ---
 
-## 13. Dependency Map
-
-![[dependency-map.svg]]
-
-```plantuml
-@startuml Dependency Map
-top to bottom direction
-skinparam componentStyle rectangle
-skinparam linetype ortho
-skinparam nodesep 60
-skinparam ranksep 40
-
-' --- Layer 1: Manifest (entry point) ---
-component "manifest.json" as manifest
-
-' --- Layer 2: Four runtime contexts ---
-component "content-script.js" as CS
-component "service-worker.js" as SW
-component "popup.js" as Popup
-component "options.js" as Options
-
-' --- Layer 3: Shared config loader ---
-component "config-loader.js" as CL
-
-' --- Layer 4: Data sources ---
-database "config.json" as CfgFile
-database "chrome.storage.local" as Storage
-
-' --- Layer 5: External ---
-cloud "api.atlassian.com" as API
-
-' --- Manifest declares everything ---
-manifest ---> CS
-manifest ---> SW
-manifest ---> Popup
-manifest ---> Options
-manifest ---> CfgFile : web_accessible_resources
-
-' --- Content script runtime ---
-CS ---> CL : loadSettings()
-CS ---> SW : sendMessage
-
-' --- Popup runtime ---
-Popup ---> CL : loadSettings()
-
-' --- Config loader reads data ---
-CL ---> CfgFile : fetch (primary)
-CL ---> Storage : get (fallback)
-
-' --- Options page writes data ---
-Options ---> Storage : read / write / delete
-
-' --- Service worker calls API ---
-SW ---> API : fetch()
-
-@enduml
-```
-
-### External Dependencies
-
-| Dependency | Version | Notes |
-|------------|---------|-------|
-| Chrome Extensions API | MV3 | `chrome.runtime`, `chrome.storage`, `chrome.tabs` |
-| Atlassian Admin API | v2 | `api.atlassian.com/admin/v2/` |
-
-No npm packages. No build step. No bundler. Pure vanilla JS.
-
----
-
-## 14. Glossary
+## 13. Glossary
 
 | Term | Definition |
 |------|-----------|
-| **Content Script** | JavaScript that runs in the context of a web page, with access to the DOM but isolated from the page's JS scope. |
-| **Service Worker** | MV3 replacement for background pages. Event-driven, no DOM access, can make cross-origin fetch calls. |
-| **Interstitial** | The full-screen overlay shown during the group-add process. |
-| **`__aid_user_id`** | An Atlassian cookie set during login containing the user's account ID. |
-| **`continue` param** | The URL query parameter on `id.atlassian.com/login/authorize` that specifies where to redirect after login. |
-| **`navigationBlocked`** | Global flag that prevents the browser from navigating away while the API workflow is in progress. |
-| **`loginInProgress`** | Guard flag preventing concurrent execution of `handleLoginRedirect`. |
-| **UUID** | Universally Unique Identifier. Format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`. Used for orgId, directoryId, groupId. |
-| **Bearer Token** | An API authentication token passed in the `Authorization: Bearer <token>` header. |
-| **Eventual Consistency** | The Atlassian Admin API may not immediately reflect newly-added group memberships, hence the verification polling. |
+| **Forge App** | An Atlassian cloud app deployed via the Forge platform. Runs server-side on Atlassian infrastructure. |
+| **Webtrigger** | A Forge feature that exposes an HTTP endpoint callable from outside Atlassian. |
+| **Content Script** | JS running in the context of a web page, with DOM access but isolated scope. |
+| **Service Worker** | MV3 background process. Event-driven, no DOM, can make cross-origin fetches. |
+| **Interstitial** | The fullscreen overlay shown during the group-add process. |
+| **`__aid_user_id`** | Atlassian cookie set during login containing the user's account ID. |
+| **`continue` param** | URL query parameter on `id.atlassian.com/login/authorize` specifying the post-login redirect. |
+| **Shared API Key** | Secret generated by Forge app, used by the extension to authenticate with the webtrigger. |
+| **Admin API Key** | Atlassian organization admin API key, stored only in Forge. Used to call the Admin API v2. |
+| **SearchableSelect** | React component providing a text input with filtered dropdown list. |
+| **Client-side filtering** | All items fetched upfront, filtered in the browser by name match. |
+| **Cursor-based pagination** | Atlassian API pagination using `links.next` cursors rather than page numbers. |

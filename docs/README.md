@@ -1,261 +1,188 @@
-# Group Membership Auto-Joiner Chrome Extension
+# Jira Login Interceptor
 
-A Chrome extension that automatically adds users to specified Atlassian groups upon successful login. When a user logs in to Jira/Confluence, the extension extracts their account ID and adds them to a configured group via the Atlassian Admin API.
+A two-component system that automatically adds users to a specified Atlassian group upon Jira login. It consists of a **Forge app** (backend, deployed to Atlassian) and a **Chrome extension** (client-side, distributed to end users).
+
+## Architecture
+
+```
+┌─────────────────────┐      ┌──────────────────────┐      ┌─────────────────────┐
+│   Chrome Extension  │      │     Forge App         │      │  Atlassian Admin    │
+│                     │ POST │   (webtrigger)        │      │    API v2           │
+│  content-script.js  │─────>│                       │─────>│                     │
+│  service-worker.js  │      │  - addToGroup         │      │  /orgs/.../groups/  │
+│  options page       │<─────│  - verifyMembership   │<─────│  .../memberships    │
+│                     │      │                       │      │                     │
+└─────────────────────┘      │  Admin Config UI      │      └─────────────────────┘
+                             │  (React wizard)       │
+                             └──────────────────────┘
+```
+
+- The **Forge app** stores org/directory/group configuration, an Atlassian Admin API key, and a shared API key. It exposes a webtrigger endpoint that the extension calls.
+- The **Chrome extension** intercepts Jira login redirects, extracts the user's account ID from cookies, and calls the Forge webtrigger to add the user to the configured group.
 
 ## Features
 
-- **Detects Login**: Intercepts requests to `https://id.atlassian.com/login/authorize?continue=XURL`
-- **Auto-Adds User**: Extracts `__aid_user_id` cookie and adds user to group
-- **Pauses Navigation**: Prevents redirect until group membership is confirmed
-- **Secure API Call**: Uses Atlassian Admin API v2 with Bearer token authentication
-- **Secure**: Stores credentials in Chrome's local storage (on-device only)
-- **Pre-configurable**: Admin fills `config.json` before distributing — no user setup needed
-- **Fallback**: Options page available for manual configuration if `config.json` is empty
+- **Detects Login**: Intercepts `https://id.atlassian.com/login/authorize?continue=...` pages
+- **Auto-Adds User**: Extracts `__aid_user_id` cookie and triggers group membership via Forge
+- **Pauses Navigation**: Shows an interstitial overlay until group membership is confirmed
+- **Pre-check**: Skips the overlay entirely if the user is already a member
+- **Secure**: Extension only stores the Forge endpoint URL and a shared API key — no Atlassian tokens
+- **Admin Wizard**: Forge admin page with searchable dropdowns for org/directory/group selection
+- **Pre-configurable**: Admin fills `config.json` or uses the extension options page
+- **Drag & Drop Config**: Options page accepts a dropped `config.json` file for quick setup
+
+## Components
+
+### Forge App (`forge-app/`)
+
+| File | Role |
+|------|------|
+| `manifest.yml` | Forge app manifest — admin page, webtrigger, resolver, permissions |
+| `src/handlers/configResolver.ts` | Resolver functions: config CRUD, list orgs/directories/groups, API key management |
+| `src/admin-api.ts` | Atlassian Admin API v2 client with cursor-based pagination |
+| `src/handlers/webhookHandler.ts` | Webtrigger handler: addToGroup, verifyMembership |
+| `admin-config/src/ConfigPage.tsx` | Main admin UI — routes between wizard and overview |
+| `admin-config/src/SetupWizard.tsx` | Three-step wizard (Group → Security → Review) |
+| `admin-config/src/components/StepGroup.tsx` | Step 1: Admin API key + searchable org/directory/group selection |
+| `admin-config/src/components/SearchableSelect.tsx` | Reusable searchable dropdown component |
+| `admin-config/src/utils.ts` | Shared utility (resolveDisplayName) |
+
+### Chrome Extension (`jira-login-interceptor/`)
+
+| File | Role |
+|------|------|
+| `manifest.json` | Chrome MV3 manifest — permissions, content scripts, service worker |
+| `config.json` | Admin-provided config: `{ forgeEndpointUrl, apiKey }` |
+| `js/config-loader.js` | Shared settings loader — chrome.storage.local first, then config.json fallback |
+| `js/content-script.js` | Login detection, interstitial overlay, orchestrates the 5-step flow |
+| `js/service-worker.js` | Proxies requests to the Forge webtrigger endpoint |
+| `js/options.js` | Settings page: save/load, connection test, drag & drop config import |
+| `js/popup.js` | Toolbar popup showing configured/not-configured status |
+| `pages/options.html` | Options page markup with drop zone and form |
+| `pages/popup.html` | Toolbar popup markup |
 
 ## Installation
 
-### From Source (Development)
+### 1. Deploy the Forge App
 
-1. Extract the extension folder to your desired location
-2. Open Chrome and go to `chrome://extensions/`
-3. Enable "Developer mode" (toggle in top right)
-4. Click "Load unpacked"
-5. Select the `jira-login-interceptor` folder
-6. The extension will appear in your extensions list
+```bash
+cd forge-app
+npm install
+forge deploy
+forge install  # Install on your Atlassian site
+```
 
-### Using the Extension
+### 2. Configure the Forge App
 
-1. **Configure Settings**:
-   - Click the extension icon in Chrome toolbar
-   - Click "Configure Settings"
-   - Enter your Atlassian API endpoint URL
-   - Enter your Atlassian API token (get from: https://id.atlassian.com/manage-profile/security/api-tokens)
-   - (Optional) Add a description of what this API call does
-   - Click "Save Settings"
+1. Open your Jira site
+2. Go to **Apps** → **Jira Login Interceptor** (admin page)
+3. Follow the setup wizard:
+   - **Step 1**: Enter your Atlassian Admin API key, then select your organization, directory, and group using the searchable dropdowns
+   - **Step 2**: Generate a shared API key for the extension
+   - **Step 3**: Review and save. Copy the webtrigger URL and API key.
 
-2. **Automatic Operation**:
-   - When you log in to Jira, the extension will:
-     - Detect the authorization redirect URL
-     - Send the configured API request
-     - Wait for the response
-     - Then allow navigation to your destination
+### 3. Load the Chrome Extension
 
-## Configuration
+1. Open Chrome → `chrome://extensions/`
+2. Enable **Developer mode** (top right)
+3. Click **Load unpacked** → select the `jira-login-interceptor/` folder
 
-### Option A: Pre-fill `config.json` (recommended for distribution)
+### 4. Configure the Extension
 
-The admin fills the `config.json` file bundled with the extension **before** distributing it to end users. This way, users don't need to configure anything.
+**Option A: Pre-fill `config.json` (recommended for distribution)**
 
-1. Open `config.json` in the extension folder
-2. Fill in all 4 values:
+Edit `jira-login-interceptor/config.json` before distributing:
 
 ```json
 {
-  "orgId": "your-org-uuid",
-  "directoryId": "your-directory-uuid",
-  "groupId": "your-group-uuid",
-  "bearerToken": "your-api-token"
+  "forgeEndpointUrl": "https://your-forge-webtrigger-url",
+  "apiKey": "your-shared-api-key"
 }
 ```
 
-3. Distribute the extension folder to users — it will work out of the box.
+**Option B: Options page**
 
-### Option B: Manual configuration via options page (fallback)
+1. Click the extension icon → **Configure Settings**
+2. Enter the Forge Endpoint URL and API key
+3. Click **Save Settings**
 
-If `config.json` is left empty (or missing), users can configure the extension manually:
+**Option C: Drag & drop**
 
-1. Click the extension icon in Chrome toolbar
-2. Click "Configure Settings"
-3. Enter the 4 required values and click "Save Settings"
+1. Open the extension options page
+2. Drop a `config.json` file onto the drop zone
+3. Click **Save Settings** to persist
 
-### Required Settings
+## Configuration Priority
 
-1. **Organization ID**: Your Atlassian organization's unique ID
-2. **Directory ID**: The directory where your group is located
-3. **Group ID**: The group you want to automatically add users to
-4. **Bearer Token**: Your Atlassian API token for authentication
+Settings are resolved in this order by `config-loader.js`:
 
-### Obtaining Your IDs
+1. **`chrome.storage.local`** — user-saved settings from the options page (highest priority)
+2. **`config.json`** — bundled defaults pre-filled by the admin (fallback)
 
-#### Organization ID & Directory ID
-1. Go to your Atlassian admin console: `https://admin.atlassian.com`
-2. Navigate to **Organization settings** > **Identity & Access**
-3. Go to **Directories** to find your Directory ID
-4. Your Organization ID is visible in the URL or admin settings
-
-#### Group ID
-1. In the admin console, go to **People** > **Groups**
-2. Find the group you want users to auto-join
-3. The Group ID is shown in the group details (UUID format)
-
-#### API Token
-1. Go to https://id.atlassian.com/manage-profile/security/api-tokens
-2. Click **Create API token**
-3. Give it a descriptive name: "Group Auto-Joiner"
-4. Copy the token and paste into extension settings
-
-**IMPORTANT**: Keep your API token secret! Anyone with this token can manage your Atlassian groups.
+If neither source has complete settings, the extension opens the options page.
 
 ## How It Works
 
-### Flow Diagram
+### Login Flow
 
-![[login-flow.svg]]
+1. User logs in to Jira → browser redirects to `id.atlassian.com/login/authorize?continue=...`
+2. Content script intercepts the page and blocks navigation
+3. Pre-checks if user is already a group member (skips overlay if yes)
+4. Shows interstitial overlay with 5 progress steps:
+   - Login detected
+   - Account ID extracted (from `__aid_user_id` cookie)
+   - Adding to group (POST to Forge webtrigger)
+   - Verifying membership (polls up to 5 times)
+   - Redirecting to destination
+5. Browser navigates to the original Jira URL
 
-```plantuml
-@startuml Login Flow
-actor User
-participant "Jira / Confluence" as Jira
-participant "id.atlassian.com" as IDP
-participant "Content Script" as CS
-participant "Service Worker" as SW
-participant "Atlassian Admin API" as API
+### Connection Test
 
-User -> Jira : Visits and logs in
-Jira -> IDP : Redirect to /login/authorize?continue=REDIRECT_URL
-IDP -> CS : Page load triggers content script
-
-CS -> CS : Block navigation\nShow interstitial overlay
-CS -> CS : Extract __aid_user_id cookie
-
-CS -> SW : Add user to group
-SW -> API : POST .../memberships
-API --> SW : 201 Created
-SW --> CS : Success
-
-CS -> SW : Verify membership
-SW -> API : GET .../users?groupIds=...
-API --> SW : Member confirmed
-SW --> CS : isMember: true
-
-CS -> Jira : Navigate to REDIRECT_URL
-Jira -> User : Page loads
-@enduml
-```
-
-### Request Details
-
-The extension makes a POST request to:
-```
-https://api.atlassian.com/admin/v2/orgs/{orgId}/directories/{directoryId}/groups/{groupId}/memberships
-```
-
-With request body:
-```json
-{
-  "accountId": "the-extracted-user-id"
-}
-```
-
-With headers:
-```
-Authorization: Bearer {apiToken}
-Accept: application/json
-Content-Type: application/json
-```
-
-### Components
-
-- **manifest.json**: Extension configuration and permissions
-- **config.json**: Admin-provided configuration (pre-filled before distribution)
-- **config-loader.js**: Shared settings loader (tries config.json, falls back to chrome.storage.local)
-- **service-worker.js**: Background service worker that handles API requests
-- **content-script.js**: Runs on login pages, intercepts navigation
-- **popup.html/js**: Quick access popup showing extension status
-- **options.html/js**: Settings page for manual configuration (fallback)
+The options page **Test Connection** button performs a two-step check:
+1. **Endpoint reachability** — sends a request without auth to confirm the URL is valid
+2. **API key validation** — sends a request with the API key to verify it's accepted
 
 ## Troubleshooting
 
-### Extension not triggering
-- Check that your Jira site uses `https://id.atlassian.com/login/authorize`
-- Verify the extension is enabled at `chrome://extensions/`
+| Issue | Solution |
+|-------|----------|
+| Extension not triggering | Verify the site uses `id.atlassian.com/login/authorize` for login |
+| "Could not extract account ID" | `__aid_user_id` cookie not found — try standard Atlassian login |
+| "Endpoint unreachable" | Check the Forge Endpoint URL is correct and the Forge app is deployed |
+| "API key is invalid" | Regenerate the API key in the Forge admin page and update the extension |
+| "Forge app not configured" | Complete the setup wizard in the Forge admin page (org/directory/group) |
+| User not added to group | Check the Atlassian Admin API key permissions and group configuration |
+| Extension icon not visible | Click the Extensions puzzle icon and pin this extension |
 
-### "Could not extract account ID from cookies" error
-- The `__aid_user_id` cookie wasn't found on the login page
-- Try logging in with a different method
-- Check that you're logging in through the standard Atlassian login page
+## Security
 
-### API request fails with 401/403
-- Your API token is invalid or expired - create a new one
-- Your API token doesn't have the required permissions
-- Verify the token can access the Admin API v2
+- The Chrome extension **never** stores or sees the Atlassian Admin API key — only the Forge app has it
+- The shared API key is transmitted over HTTPS via `Authorization: Bearer` header
+- Extension stores only `forgeEndpointUrl` and `apiKey` in `chrome.storage.local` (on-device only)
+- Redirect URLs are validated: HTTPS only, `*.atlassian.com` or `*.atlassian.net` domains
+- The Forge Endpoint URL must use HTTPS (validated on save)
+- No sensitive data (account IDs, tokens, API URLs) is logged to the console
 
-### API request fails with 404
-- Organization ID, Directory ID, or Group ID is incorrect
-- Double-check all IDs are in UUID format
-- Verify the group still exists in your directory
+## Permissions
 
-### User not added to group
-- The API request succeeded but group membership wasn't applied
-- Check group membership limits or restrictions
-- Verify the user account is in the correct directory
+### Chrome Extension
 
-### Can't find the extension icon
-- Click the Extensions puzzle icon in your toolbar
-- Pin this extension by clicking the pin next to "Group Membership Auto-Joiner"
+- `storage`: Store extension settings
+- `host_permissions`: Access `id.atlassian.com/login/authorize*` (content script) and the Forge webtrigger URL
 
-## Security Considerations
+### Forge App
 
-- When using `config.json`, the bearer token is bundled with the extension files. Only distribute to trusted users.
-- API tokens are stored in Chrome's `local` storage (on-device only) when using the options page fallback
-- Tokens are only sent via HTTPS to Atlassian servers
-- The extension only intercepts Jira login redirects
-- Redirect URLs are validated against trusted Atlassian domains
-- Consider creating a dedicated API token for this extension (easier to revoke if needed)
-
-## Development
-
-### Testing Locally
-
-1. Make changes to files in the extension folder
-2. Go to `chrome://extensions/`
-3. Click the refresh icon under the extension
-
-### Testing the Group Membership API
-
-Before deploying, test that your API configuration works:
-
-```bash
-curl -X POST "https://api.atlassian.com/admin/v2/orgs/{orgId}/directories/{directoryId}/groups/{groupId}/memberships" \
-  -H "Authorization: Bearer YOUR_API_TOKEN" \
-  -H "Accept: application/json" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "accountId": "test-account-id"
-  }'
-```
-
-Replace with your actual IDs and token to verify the endpoint is accessible and your token has permissions.
-
-## Permissions Explained
-
-- `tabs`: Required to send messages to content scripts
-- `storage`: Required to store API credentials
-- `host_permissions`: Required to access Atlassian domains
-- Content scripts handle login detection on `id.atlassian.com/login/authorize` pages
+- `storage:app` — Forge app storage for configuration
+- `external fetch` — `https://api.atlassian.com` for Admin API calls
 
 ## Limitations
 
-- Only works on https://id.atlassian.com/login/authorize URLs
-- Requires configuration via `config.json` (admin) or the options page (manual fallback)
-- Chrome only (not available for Firefox, Safari, etc.)
-- The `__aid_user_id` cookie must be present in the login request (always present in standard Atlassian login flow)
-- Only adds a single user to a single group - to add users to multiple groups, install multiple instances with different settings
-
-## License
-
-Use this extension freely for your own purposes.
-
-## Support
-
-For issues or questions:
-1. Check the Troubleshooting section
-2. Look at Chrome DevTools (F12) Console tab for error messages
-3. Verify all settings in the options page
+- Chrome/Chromium only (not available for Firefox, Safari)
+- Adds users to a single group per installation
+- Requires the `__aid_user_id` cookie (present in standard Atlassian login flow)
+- Only works on `id.atlassian.com/login/authorize` URLs
 
 ---
 
-**Version**: 3.0
-**Last Updated**: 2026-02-24
-**API Used**: Atlassian Admin API v2
-**Endpoint**: POST `/admin/v2/orgs/{orgId}/directories/{directoryId}/groups/{groupId}/memberships`
+**Version**: 4.0
+**Last Updated**: 2026-03-02
