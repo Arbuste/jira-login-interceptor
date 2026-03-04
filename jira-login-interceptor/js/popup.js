@@ -13,7 +13,8 @@ async function checkStatus() {
 
   if (result.forgeEndpointUrl && result.apiKey) {
     statusDiv.className = 'status active';
-    statusDiv.textContent = '\u2713 Extension configured and active';
+    const source = result.managedPolicy ? ' (managed by IT policy)' : '';
+    statusDiv.textContent = `\u2713 Extension configured and active${source}`;
   } else {
     statusDiv.className = 'status inactive';
     statusDiv.textContent = '\u2717 Extension not configured. Please set up your Forge endpoint and API key.';

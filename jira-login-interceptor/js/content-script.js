@@ -328,8 +328,12 @@ async function handleLoginRedirect(continueUrl) {
 
     if (!accountId) {
       const cookieNames = document.cookie.split(';').map(c => c.trim().split('=')[0]).filter(Boolean);
+      const hasAtlassianCookies = cookieNames.some(n => n.startsWith('__aid') || n.startsWith('atlassian') || n.startsWith('cloud.session'));
+      const hint = hasAtlassianCookies
+        ? 'The login flow did not set the expected cookie. Your SSO/IdP may be bypassing the standard Atlassian ID authorize step.'
+        : 'No Atlassian cookies found. Your organization may use an external Identity Provider (SAML/OIDC) that redirects through a different login flow, bypassing id.atlassian.com.';
       updateInterstitialStep(2, 'error', 'Could not extract user account ID.',
-        `Cookie "__aid_user_id" not found.\nAvailable cookies: ${cookieNames.length ? cookieNames.join(', ') : '(none)'}`);
+        `Cookie "__aid_user_id" not found. ${hint}\nAvailable cookies: ${cookieNames.length ? cookieNames.join(', ') : '(none)'}`);
       showContinueButton(continueUrl);
       return;
     }

@@ -13,27 +13,60 @@ const resetBtn = document.getElementById('resetBtn');
 const testBtn = document.getElementById('testBtn');
 const statusMessage = document.getElementById('statusMessage');
 
-// Load saved settings (storage first, then config.json fallback)
-function loadSettings() {
-  chrome.storage.local.get(['forgeEndpointUrl', 'apiKey'], async (result) => {
-    if (result.forgeEndpointUrl || result.apiKey) {
-      if (result.forgeEndpointUrl) forgeEndpointUrlInput.value = result.forgeEndpointUrl;
-      if (result.apiKey) apiKeyInput.value = result.apiKey;
+// Load settings: managed policy → local storage → config.json
+async function loadSettings() {
+  // 1. Check managed policy (enterprise deployment via GPO / Intune)
+  try {
+    const managed = await new Promise((resolve, reject) => {
+      chrome.storage.managed.get(['forgeEndpointUrl', 'apiKey'], (result) => {
+        if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+        else resolve(result);
+      });
+    });
+    if (managed.forgeEndpointUrl || managed.apiKey) {
+      if (managed.forgeEndpointUrl) forgeEndpointUrlInput.value = managed.forgeEndpointUrl;
+      if (managed.apiKey) apiKeyInput.value = managed.apiKey;
+      lockFieldsForManagedPolicy();
       return;
     }
+  } catch (e) {
+    // No managed schema or no values — fall through
+  }
 
-    // Nothing in storage — try to populate from config.json
-    try {
-      const url = chrome.runtime.getURL('config.json');
-      const response = await fetch(url);
-      const config = await response.json();
-      if (config.forgeEndpointUrl) forgeEndpointUrlInput.value = config.forgeEndpointUrl;
-      if (config.apiKey) apiKeyInput.value = config.apiKey;
-      showStatus('Loaded from config.json. Click "Save Settings" to persist.', 'success');
-    } catch (e) {
-      // No config.json either — fields stay empty
-    }
+  // 2. User-saved settings
+  const stored = await new Promise((resolve) => {
+    chrome.storage.local.get(['forgeEndpointUrl', 'apiKey'], resolve);
   });
+  if (stored.forgeEndpointUrl || stored.apiKey) {
+    if (stored.forgeEndpointUrl) forgeEndpointUrlInput.value = stored.forgeEndpointUrl;
+    if (stored.apiKey) apiKeyInput.value = stored.apiKey;
+    return;
+  }
+
+  // 3. Fallback: config.json (bundled defaults)
+  try {
+    const url = chrome.runtime.getURL('config.json');
+    const response = await fetch(url);
+    const config = await response.json();
+    if (config.forgeEndpointUrl) forgeEndpointUrlInput.value = config.forgeEndpointUrl;
+    if (config.apiKey) apiKeyInput.value = config.apiKey;
+    showStatus('Loaded from config.json. Click "Save Settings" to persist.', 'success');
+  } catch (e) {
+    // No config.json either — fields stay empty
+  }
+}
+
+/**
+ * When config is pushed via enterprise managed policy, lock the form fields
+ * to prevent user edits and show an informational banner.
+ */
+function lockFieldsForManagedPolicy() {
+  forgeEndpointUrlInput.readOnly = true;
+  apiKeyInput.readOnly = true;
+  saveBtn.disabled = true;
+  resetBtn.disabled = true;
+  dropZone.style.display = 'none';
+  showStatus('Configuration is managed by your organization\'s IT policy. Settings cannot be changed here.', 'success');
 }
 
 // Save settings
@@ -94,7 +127,11 @@ testBtn.addEventListener('click', async () => {
       return;
     }
   } catch (err) {
-    showStatus(`Endpoint unreachable: ${err.message}`, 'error');
+    const isNetworkError = err instanceof TypeError && err.message === 'Failed to fetch';
+    const detail = isNetworkError
+      ? 'The endpoint could not be reached. This is typically caused by a corporate firewall, web proxy, or DNS policy blocking outbound HTTPS to the Forge webtrigger domain. Check with your network/infrastructure team that the domain is allowlisted.'
+      : `Endpoint unreachable: ${err.message}`;
+    showStatus(detail, 'error');
     return;
   }
 

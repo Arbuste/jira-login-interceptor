@@ -64,6 +64,24 @@ async function callForgeEndpoint(endpointUrl, apiKey, action, accountId) {
   } catch (error) {
     clearTimeout(timeoutId);
     console.error('Forge endpoint error:', error);
+
+    // Provide actionable diagnostics for network-level failures
+    if (error.name === 'AbortError') {
+      throw new Error(
+        `Request to Forge endpoint timed out after 15 seconds. ` +
+        `This may indicate a firewall, proxy, or network policy blocking access to the webtrigger URL. ` +
+        `Verify that outbound HTTPS traffic to the Forge endpoint domain is allowed.`
+      );
+    }
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error(
+        `Cannot reach the Forge endpoint (network error). ` +
+        `Possible causes: corporate firewall or web proxy blocking the request, ` +
+        `DNS resolution failure for the endpoint domain, or the endpoint URL is incorrect. ` +
+        `Check with your network/infrastructure team that the Forge webtrigger domain is allowlisted.`
+      );
+    }
+
     throw error;
   }
 }

@@ -3,13 +3,15 @@
 > **Project:** Jira Login Interceptor (Forge App + Chrome MV3 Extension)
 > **Goal:** Auto-add users to an Atlassian group upon Jira login using a Forge backend and Chrome extension frontend.
 
+All estimates assume a **single senior developer** familiar with Forge, React, and Chrome Extensions.
+
 ---
 
-## Epic 1: Forge App Backend
+## Epic 1: Forge App Backend — **4.5 days**
 
 **Objective:** Build the Forge app that manages configuration, exposes a webtrigger, and calls the Atlassian Admin API.
 
-### TASK-101: Forge App Scaffolding & Manifest
+### TASK-101: Forge App Scaffolding & Manifest — `0.5 day`
 
 - **Description:** Initialize the Forge app with `manifest.yml`, define admin page, webtrigger, resolver, and permissions.
 - **Rationale:** The Forge app is the backend that handles all Atlassian API calls. The manifest defines the app structure, permissions, and entry points.
@@ -18,7 +20,7 @@
   - External fetch permissions for `https://api.atlassian.com`
   - `storage:app` permission for configuration storage
 
-### TASK-102: Atlassian Admin API Client (`admin-api.ts`)
+### TASK-102: Atlassian Admin API Client (`admin-api.ts`) — `2 days`
 
 - **Description:** Build the API client for listing orgs/directories/groups and managing memberships.
 - **Rationale:** The Forge app needs to call the Atlassian Admin API v2 to list resources for the admin wizard and to add/verify group membership for the extension.
@@ -29,7 +31,7 @@
   - `fetchAllPages()` handles three cursor formats: full URL, query string, bare token
   - ID field fallback: `groupId ?? id`, `directoryId ?? id` for API response compatibility
 
-### TASK-103: Configuration Resolver (`configResolver.ts`)
+### TASK-103: Configuration Resolver (`configResolver.ts`) — `1 day`
 
 - **Description:** Implement resolver functions for config CRUD, resource listing, and API key management.
 - **Rationale:** The resolver is the bridge between the admin UI (React) and the backend logic. It handles all `invoke()` calls from the frontend.
@@ -40,7 +42,7 @@
   - `getAdminApiKey`/`setAdminApiKey` — manage the Atlassian admin API key
   - `getWebhookUrl` — return the webtrigger URL
 
-### TASK-104: Webtrigger Handler (`webhookHandler.ts`)
+### TASK-104: Webtrigger Handler (`webhookHandler.ts`) — `1 day`
 
 - **Description:** Handle incoming HTTP requests from the Chrome extension via the webtrigger.
 - **Rationale:** The webtrigger is the only external entry point. It must validate the shared API key and route requests to the correct admin-api functions.
@@ -51,11 +53,11 @@
 
 ---
 
-## Epic 2: Forge Admin Config UI (React)
+## Epic 2: Forge Admin Config UI (React) — **4 days**
 
 **Objective:** Build the admin configuration page with a setup wizard and searchable dropdowns.
 
-### TASK-201: Admin Config Page (`ConfigPage.tsx`)
+### TASK-201: Admin Config Page (`ConfigPage.tsx`) — `1 day`
 
 - **Description:** Build the main admin page that loads config and routes between wizard and overview views.
 - **Rationale:** The admin page is the single source of truth for all state. It manages loading of orgs/directories/groups and cascading data fetches.
@@ -66,7 +68,7 @@
   - Loading states: `loadingOrgs`, `loadingDirectories`, `loadingGroups`
   - Routes between SetupWizard (unconfigured) and Overview (configured)
 
-### TASK-202: Setup Wizard (`SetupWizard.tsx`)
+### TASK-202: Setup Wizard (`SetupWizard.tsx`) — `1 day`
 
 - **Description:** Implement a 3-step wizard for initial configuration.
 - **Rationale:** The wizard guides admins through setup: selecting the target group, generating the extension API key, and reviewing before saving.
@@ -77,7 +79,7 @@
   - Progress bar showing current step
   - Next/Back navigation with validation (Next disabled until step is complete)
 
-### TASK-203: Searchable Select Component (`SearchableSelect.tsx`)
+### TASK-203: Searchable Select Component (`SearchableSelect.tsx`) — `1 day`
 
 - **Description:** Build a reusable searchable dropdown component for org/directory/group selection.
 - **Rationale:** Plain `<select>` dropdowns don't scale with hundreds of items. Searchable inputs let admins type to filter.
@@ -89,7 +91,7 @@
   - Shows selected item name when not focused
   - `onMouseDown` with `preventDefault()` on items to prevent blur before selection
 
-### TASK-204: Step Group Component (`StepGroup.tsx`)
+### TASK-204: Step Group Component (`StepGroup.tsx`) — `1 day`
 
 - **Description:** Build wizard step 1: admin API key input and org/directory/group selection.
 - **Rationale:** This is the most complex wizard step. It needs to accept the admin API key, show instructions for creating one, and provide three cascading searchable dropdowns.
@@ -102,11 +104,11 @@
 
 ---
 
-## Epic 3: Chrome Extension
+## Epic 3: Chrome Extension — **5 days**
 
 **Objective:** Build the Chrome MV3 extension that intercepts login and calls the Forge webtrigger.
 
-### TASK-301: Extension Manifest & Scaffolding
+### TASK-301: Extension Manifest & Scaffolding — `0.5 day`
 
 - **Description:** Create `manifest.json` targeting MV3 with minimal permissions.
 - **Acceptance Criteria:**
@@ -115,7 +117,7 @@
   - `config.json` as web-accessible resource
   - Options and popup pages defined
 
-### TASK-302: Config Loader (`config-loader.js`)
+### TASK-302: Config Loader (`config-loader.js`) — `0.5 day`
 
 - **Description:** Build the priority-based configuration loader.
 - **Rationale:** chrome.storage.local takes priority (user overrides), with config.json as fallback (bundled defaults).
@@ -124,7 +126,7 @@
   - Falls back to `config.json` via `chrome.runtime.getURL()`
   - Returns unified config object or empty object
 
-### TASK-303: Service Worker (`service-worker.js`)
+### TASK-303: Service Worker (`service-worker.js`) — `0.5 day`
 
 - **Description:** Background service that proxies requests to the Forge webtrigger.
 - **Acceptance Criteria:**
@@ -134,7 +136,7 @@
   - 15-second `AbortController` timeout on all fetches
   - Returns `true` from `onMessage` to keep async channel open
 
-### TASK-304: Content Script (`content-script.js`)
+### TASK-304: Content Script (`content-script.js`) — `2 days`
 
 - **Description:** Login interception, interstitial overlay, and 5-step orchestration.
 - **Acceptance Criteria:**
@@ -148,7 +150,7 @@
   - `navigateTo()` validates redirect URL (HTTPS + `*.atlassian.com|net`)
   - Concurrent execution guard (`loginInProgress`)
 
-### TASK-305: Options Page (`options.js` + `options.html`)
+### TASK-305: Options Page (`options.js` + `options.html`) — `1 day`
 
 - **Description:** Settings page with form, connection test, and drag & drop config import.
 - **Acceptance Criteria:**
@@ -160,7 +162,7 @@
   - Clear All button with confirmation
   - Status messages for success/error
 
-### TASK-306: Popup (`popup.js` + `popup.html`)
+### TASK-306: Popup (`popup.js` + `popup.html`) — `0.5 day`
 
 - **Description:** Toolbar popup showing configuration status.
 - **Acceptance Criteria:**
@@ -170,9 +172,9 @@
 
 ---
 
-## Epic 4: Security & Edge Cases
+## Epic 4: Security & Edge Cases — **1.5 days**
 
-### TASK-401: Open Redirect Protection
+### TASK-401: Open Redirect Protection — `0.5 day`
 
 - **Description:** Validate all redirect URLs before navigation.
 - **Acceptance Criteria:**
@@ -180,7 +182,7 @@
   - Hostname must end with `.atlassian.com` or `.atlassian.net`
   - Blocked redirects are logged but don't crash the extension
 
-### TASK-402: Error Handling & Recovery
+### TASK-402: Error Handling & Recovery — `0.5 day`
 
 - **Description:** Graceful failure for all error scenarios.
 - **Acceptance Criteria:**
@@ -190,7 +192,7 @@
   - Verification exhaustion → amber warning, still redirects
   - Catch-all handler in `handleLoginRedirect`
 
-### TASK-403: Logging Hygiene
+### TASK-403: Logging Hygiene — `0.5 day`
 
 - **Description:** Remove all sensitive data from console logs.
 - **Acceptance Criteria:**
@@ -199,9 +201,9 @@
 
 ---
 
-## Epic 5: Quality Assurance & Documentation
+## Epic 5: Quality Assurance & Documentation — **3 days**
 
-### TASK-501: Documentation
+### TASK-501: Documentation — `1 day`
 
 - **Description:** Write README, QUICKSTART, TECHNICAL, EXAMPLES, and TEST-PLAN docs.
 - **Acceptance Criteria:**
@@ -209,7 +211,7 @@
   - Configuration examples use `forgeEndpointUrl` and `apiKey`
   - Setup instructions cover both Forge admin wizard and extension options page
 
-### TASK-502: Test Execution
+### TASK-502: Test Execution — `2 days`
 
 - **Description:** Execute all test cases from TEST-PLAN.md.
 - **Acceptance Criteria:**
@@ -218,4 +220,17 @@
 
 ---
 
-**Last Updated**: 2026-03-02
+## Summary
+
+| Epic | Estimate |
+|------|----------|
+| Epic 1: Forge App Backend | 4.5 days |
+| Epic 2: Forge Admin Config UI | 4 days |
+| Epic 3: Chrome Extension | 5 days |
+| Epic 4: Security & Edge Cases | 1.5 days |
+| Epic 5: QA & Documentation | 3 days |
+| **Total** | **18 days** |
+
+> Note: Epics 1–2 (backend + UI) and Epic 3 (extension) can be parallelized if a second developer is available, reducing the critical path to ~10.5 days. Epic 4 tasks are best done inline with Epics 3 (TASK-401/402/403 overlap with content script and service worker work).
+
+**Last Updated**: 2026-03-03
