@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .error-container {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            max-width: 500px;
+            text-align: center;
+        }
+        .error-code {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #e74c3c;
+            margin: 0;
+        }
+        .error-message {
+            font-size: 1.5rem;
+            color: #2c3e50;
+            margin: 1rem 0;
+        }
+        .error-description {
+            color: #7f8c8d;
+            margin: 1rem 0;
+            line-height: 1.6;
+        }
+        .error-details {
+            background: #ecf0f1;
+            padding: 1rem;
+            border-radius: 4px;
+            margin: 1rem 0;
+            text-align: left;
+            font-size: 0.9rem;
+            color: #34495e;
+            font-family: monospace;
+            word-break: break-word;
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 1.5rem;
+            padding: 0.75rem 1.5rem;
+            background: #3498db;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background 0.3s;
+        }
+        .back-link:hover {
+            background: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        {% if error %}
+        <h1 class="error-code">{{ error.status_code }}</h1>
+        <pre class="error-message">{{ error.json() | tojson(indent=2) }}</pre>
+        {% else %}
+        <h1 class="error-code">Error</h1>
+        <p class="error-description">Unauthenticated.</p>
+        {% endif %}
+    </div>
+</body>
+</html>
